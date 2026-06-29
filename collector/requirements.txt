@@ -19,3 +19,6 @@ langgraph>=0.2.0
 langchain>=0.3.0
 langchain-aws>=0.2.0
 langchain-core>=0.3.0
+# API
+fastapi~=0.104.0
+uvicorn[standard]~=0.24.0
