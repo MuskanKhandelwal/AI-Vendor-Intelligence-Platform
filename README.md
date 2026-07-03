@@ -156,6 +156,46 @@ The brief includes:
 - **Competitive Position** — direct competitors, investors, market risks
 - **Executive Summary** — synthesis for procurement decision-making
 
+## Frontend: Vendor Intelligence Brief Viewer
+![Frontend UI screenshot](docs/frontend.png)
+
+A single-page application (pure HTML/CSS/JS) for viewing generated briefs with an interactive, professional interface.
+
+### Running the Frontend
+
+**Terminal 1** — Start the API server:
+```bash
+source venv/bin/activate
+python api/run.py
+```
+
+**Terminal 2** — Serve the frontend:
+```bash
+python -m http.server 8001 --directory frontend
+```
+
+Then open http://localhost:8001 in your browser.
+
+### Features
+
+- **Quick-select chips** for 10 popular companies (Anthropic, OpenAI, Cohere, Mistral, Scale AI, Hugging Face, Perplexity, LangChain, Pinecone, Nvidia)
+- **Score cards** — 4 key metrics with color-coded indicators:
+  - **Financial Health** — Green (≥80), Yellow (60-79), Red (<60)
+  - **Technology Momentum** — Same color scheme
+  - **News Sentiment** — Positive (green), Neutral (grey), Negative (red)
+  - **Personnel Stability** — Numeric score with color coding
+- **Expandable accordion panels** for detailed sections:
+  - Financial Health (expanded by default)
+  - Technology Momentum
+  - News & Sentiment
+  - Personnel Stability
+  - Competitive Position
+  - Executive Summary (expanded by default)
+- **Data sources footer** — References SEC EDGAR, GitHub, ArXiv, Google News, Neo4j
+- **Error handling** — Graceful message if brief generation fails
+- **Fully responsive** — Mobile-optimized layout
+- **No external dependencies** — Vanilla JavaScript only (except Google Fonts)
+
 ## Agent Orchestration
 
 The brief generation uses a **LangGraph StateGraph** where the supervisor LLM intelligently routes between specialist agents:

@@ -1,0 +1,33 @@
+name: API Health Check
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: pip install fastapi uvicorn requests
+      
+      - name: Test API health endpoint
+        run: |
+          python -c "
+          import subprocess, time, requests
+          proc = subprocess.Popen(['python', 'api/run.py'])
+          time.sleep(5)
+          r = requests.get('http://localhost:8000/health')
+          assert r.status_code == 200, f'Health check failed: {r.status_code}'
+          assert r.json()['status'] == 'healthy'
+          print('Health check passed')
+          proc.terminate()
+          "

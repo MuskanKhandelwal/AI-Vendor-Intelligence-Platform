@@ -1,11 +1,758 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Vendor Intelligence Platform</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Vendor Intelligence Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header .subtitle {
+            font-size: 1.1rem;
+            color: #94a3b8;
+            font-weight: 400;
+        }
+
+        /* Search Section */
+        .search-section {
+            margin-bottom: 40px;
+        }
+
+        .search-input-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .search-input-group input {
+            flex: 1;
+            padding: 14px 18px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+
+        .search-input-group input::placeholder {
+            color: #64748b;
+        }
+
+        .search-input-group input:focus {
+            outline: none;
+            border-color: #60a5fa;
+            background: #0f172a;
+            box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+        }
+
+        .search-input-group button {
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.2s;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .search-input-group button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(96, 165, 250, 0.3);
+        }
+
+        .search-input-group button:active {
+            transform: translateY(0);
+        }
+
+        .search-input-group button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Quick Select Chips */
+        .quick-select {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .chip {
+            padding: 8px 16px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 20px;
+            color: #cbd5e1;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .chip:hover {
+            border-color: #60a5fa;
+            color: #60a5fa;
+            background: rgba(96, 165, 250, 0.1);
+        }
+
+        .chip:active {
+            background: rgba(96, 165, 250, 0.2);
+        }
+
+        /* Loading State */
+        .loading-state {
+            display: none;
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .loading-state.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(96, 165, 250, 0.2);
+            border-top-color: #60a5fa;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 30px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-message {
+            font-size: 1.1rem;
+            color: #cbd5e1;
+            min-height: 30px;
+        }
+
+        /* Error State */
+        .error-banner {
+            display: none;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid #dc2626;
+            border-radius: 8px;
+            padding: 16px;
+            color: #fca5a5;
+            margin-bottom: 30px;
+            font-weight: 500;
+        }
+
+        .error-banner.show {
+            display: block;
+        }
+
+        /* Results Section */
+        .results-section {
+            display: none;
+        }
+
+        .results-section.show {
+            display: block;
+        }
+
+        .company-name {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 30px;
+            color: #f1f5f9;
+        }
+
+        /* Score Cards */
+        .score-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 40px;
+        }
+
+        .score-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .score-card:hover {
+            border-color: #475569;
+            transform: translateY(-4px);
+        }
+
+        .score-card.sentiment {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .score-label {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .score-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .score-value.green {
+            color: #4ade80;
+        }
+
+        .score-value.yellow {
+            color: #facc15;
+        }
+
+        .score-value.red {
+            color: #f87171;
+        }
+
+        .score-max {
+            color: #64748b;
+            font-size: 1rem;
+            font-weight: 400;
+        }
+
+        .sentiment-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .sentiment-badge.positive {
+            background: rgba(74, 222, 128, 0.2);
+            color: #4ade80;
+        }
+
+        .sentiment-badge.neutral {
+            background: rgba(148, 163, 184, 0.2);
+            color: #cbd5e1;
+        }
+
+        .sentiment-badge.negative {
+            background: rgba(248, 113, 113, 0.2);
+            color: #f87171;
+        }
+
+        /* Accordion Panels */
+        .accordion {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 40px;
+        }
+
+        .accordion-panel {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .accordion-header {
+            padding: 18px 24px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+            transition: all 0.2s;
+            font-weight: 600;
+            color: #e2e8f0;
+        }
+
+        .accordion-header:hover {
+            background: rgba(96, 165, 250, 0.05);
+        }
+
+        .accordion-toggle {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+            color: #94a3b8;
+            transition: transform 0.3s;
+            font-size: 0.8rem;
+        }
+
+        .accordion-panel.expanded .accordion-toggle {
+            transform: rotate(180deg);
+        }
+
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+            padding: 0 24px;
+        }
+
+        .accordion-panel.expanded .accordion-content {
+            max-height: 1000px;
+            padding: 0 24px 24px 24px;
+        }
+
+        .accordion-content p {
+            color: #cbd5e1;
+            line-height: 1.8;
+        }
+
+        /* Footer */
+        .footer {
+            border-top: 1px solid #334155;
+            padding-top: 24px;
+            margin-top: 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            font-size: 0.9rem;
+            color: #94a3b8;
+        }
+
+        .data-sources {
+            display: flex;
+            gap: 12px;
+        }
+
+        .timestamp {
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .header h1 {
+                font-size: 1.8rem;
+            }
+
+            .search-input-group {
+                flex-direction: column;
+            }
+
+            .score-cards {
+                grid-template-columns: 1fr;
+            }
+
+            .footer {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .quick-select {
+                gap: 8px;
+            }
+
+            .chip {
+                padding: 6px 12px;
+                font-size: 0.85rem;
+            }
+        }
+
+        /* Markdown rendering */
+        .markdown-content strong {
+            color: #60a5fa;
+            font-weight: 600;
+        }
+    </style>
 </head>
 <body>
-  <h1>AI Vendor Intelligence Platform</h1>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>AI Vendor Intelligence Platform</h1>
+            <p class="subtitle">Vendor intelligence briefs powered by LangGraph + AWS Bedrock</p>
+        </div>
+
+        <!-- Search Section -->
+        <div class="search-section">
+            <div class="search-input-group">
+                <input
+                    type="text"
+                    id="companyInput"
+                    placeholder="Enter AI company name e.g. Cohere, Anthropic, Mistral..."
+                    autocomplete="off"
+                >
+                <button id="analyzeBtn" onclick="handleSearch()">Analyze</button>
+            </div>
+
+            <div class="quick-select" id="quickSelectContainer"></div>
+        </div>
+
+        <!-- Error Banner -->
+        <div class="error-banner" id="errorBanner"></div>
+
+        <!-- Loading State -->
+        <div class="loading-state" id="loadingState">
+            <div class="spinner"></div>
+            <div class="loading-message" id="loadingMessage">Querying SEC EDGAR filings...</div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section" id="resultsSection">
+            <h2 class="company-name" id="companyName"></h2>
+
+            <!-- Score Cards -->
+            <div class="score-cards" id="scoreCards"></div>
+
+            <!-- Accordion Panels -->
+            <div class="accordion" id="accordionContainer"></div>
+
+            <!-- Footer -->
+            <div class="footer">
+                <div class="data-sources">
+                    Data sources:
+                    <span>SEC EDGAR</span>
+                    <span>·</span>
+                    <span>GitHub</span>
+                    <span>·</span>
+                    <span>ArXiv</span>
+                    <span>·</span>
+                    <span>Google News</span>
+                    <span>·</span>
+                    <span>Neo4j</span>
+                </div>
+                <div class="timestamp" id="timestamp"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        const COMPANIES = ['Anthropic', 'OpenAI', 'Cohere', 'Mistral', 'Scale AI', 'Hugging Face', 'Perplexity', 'LangChain', 'Pinecone', 'Nvidia'];
+        const LOADING_MESSAGES = [
+            'Querying SEC EDGAR filings...',
+            'Analyzing GitHub activity...',
+            'Processing ArXiv research papers...',
+            'Scanning news signals...',
+            'Building competitive landscape...',
+            'Synthesizing brief...'
+        ];
+
+        let currentMessageIndex = 0;
+        let loadingInterval = null;
+
+        // Initialize quick select chips
+        function initializeQuickSelect() {
+            const container = document.getElementById('quickSelectContainer');
+            COMPANIES.forEach(company => {
+                const chip = document.createElement('button');
+                chip.className = 'chip';
+                chip.textContent = company;
+                chip.onclick = () => {
+                    document.getElementById('companyInput').value = company;
+                    handleSearch();
+                };
+                container.appendChild(chip);
+            });
+        }
+
+        // Handle search
+        async function handleSearch() {
+            const input = document.getElementById('companyInput');
+            const company = input.value.trim();
+
+            if (!company) {
+                input.focus();
+                return;
+            }
+
+            showLoading();
+            hideError();
+
+            try {
+                const response = await fetch(`${API_BASE}/brief`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ company })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                renderBrief(company, data.brief);
+            } catch (error) {
+                console.error('Error:', error);
+                showError(company);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Parse brief text
+        function parseBrief(briefText) {
+            const result = {
+                sections: {},
+                scores: {},
+                sentiment: null
+            };
+
+            // Extract scores
+            const scorePattern = /\*\*([A-Z\s&]+?):\s*(\d+)\/100\*\*/g;
+            let match;
+            while ((match = scorePattern.exec(briefText)) !== null) {
+                const label = match[1].trim();
+                const score = parseInt(match[2]);
+                result.scores[label] = score;
+            }
+
+            // Extract sentiment
+            const sentimentPattern = /\*\*NEWS\s*&\s*SENTIMENT:\s*(Positive|Neutral|Negative)\*\*/i;
+            const sentimentMatch = briefText.match(sentimentPattern);
+            if (sentimentMatch) {
+                result.sentiment = sentimentMatch[1];
+            }
+
+            // Extract sections (text between ** headers)
+            const sectionPattern = /\*\*([^*]+?):?\*\*\s*\n([\s\S]*?)(?=\*\*|$)/g;
+            while ((match = sectionPattern.exec(briefText)) !== null) {
+                let title = match[1].trim();
+                let content = match[2].trim();
+                result.sections[title] = content;
+            }
+
+            return result;
+        }
+
+        // Render brief results
+        function renderBrief(company, briefText) {
+            const parsed = parseBrief(briefText);
+
+            // Company name
+            document.getElementById('companyName').textContent = company;
+
+            // Score cards
+            renderScoreCards(parsed.scores, parsed.sentiment);
+
+            // Accordion panels
+            renderAccordion(parsed.sections);
+
+            // Timestamp
+            const now = new Date();
+            document.getElementById('timestamp').textContent = `Generated ${now.toLocaleTimeString()}`;
+
+            // Show results
+            document.getElementById('resultsSection').classList.add('show');
+        }
+
+        // Render score cards
+        function renderScoreCards(scores, sentiment) {
+            const container = document.getElementById('scoreCards');
+            container.innerHTML = '';
+
+            // Financial Health
+            if (scores['FINANCIAL HEALTH']) {
+                container.appendChild(createScoreCard('Financial Health', scores['FINANCIAL HEALTH']));
+            }
+
+            // Technology Momentum
+            if (scores['TECHNOLOGY MOMENTUM']) {
+                container.appendChild(createScoreCard('Technology Momentum', scores['TECHNOLOGY MOMENTUM']));
+            }
+
+            // News Sentiment
+            if (sentiment) {
+                container.appendChild(createSentimentCard(sentiment));
+            }
+
+            // Personnel Stability
+            if (scores['PERSONNEL STABILITY']) {
+                container.appendChild(createScoreCard('Personnel Stability', scores['PERSONNEL STABILITY']));
+            }
+        }
+
+        // Create score card
+        function createScoreCard(label, score) {
+            const card = document.createElement('div');
+            card.className = 'score-card';
+
+            let colorClass = 'green';
+            if (score < 60) colorClass = 'red';
+            else if (score < 80) colorClass = 'yellow';
+
+            card.innerHTML = `
+                <div class="score-label">${label}</div>
+                <div class="score-value ${colorClass}">${score}<span class="score-max">/100</span></div>
+            `;
+            return card;
+        }
+
+        // Create sentiment card
+        function createSentimentCard(sentiment) {
+            const card = document.createElement('div');
+            card.className = 'score-card sentiment';
+
+            const sentimentLower = sentiment.toLowerCase();
+            card.innerHTML = `
+                <div class="score-label">News Sentiment</div>
+                <span class="sentiment-badge ${sentimentLower}">${sentiment}</span>
+            `;
+            return card;
+        }
+
+        // Render accordion
+        function renderAccordion(sections) {
+            const container = document.getElementById('accordionContainer');
+            container.innerHTML = '';
+
+            const sectionOrder = [
+                'FINANCIAL HEALTH',
+                'TECHNOLOGY MOMENTUM',
+                'NEWS & SENTIMENT',
+                'PERSONNEL STABILITY',
+                'COMPETITIVE POSITION',
+                'EXECUTIVE SUMMARY'
+            ];
+
+            const expandByDefault = ['FINANCIAL HEALTH', 'EXECUTIVE SUMMARY'];
+
+            sectionOrder.forEach(sectionKey => {
+                if (sections[sectionKey]) {
+                    const content = sections[sectionKey];
+                    const isExpanded = expandByDefault.includes(sectionKey);
+                    container.appendChild(createAccordionPanel(sectionKey, content, isExpanded));
+                }
+            });
+        }
+
+        // Create accordion panel
+        function createAccordionPanel(title, content, expanded = false) {
+            const panel = document.createElement('div');
+            panel.className = 'accordion-panel' + (expanded ? ' expanded' : '');
+
+            const htmlContent = renderMarkdown(content);
+
+            panel.innerHTML = `
+                <div class="accordion-header" onclick="togglePanel(this.parentElement)">
+                    <span>${title}</span>
+                    <span class="accordion-toggle">▼</span>
+                </div>
+                <div class="accordion-content">
+                    <p>${htmlContent}</p>
+                </div>
+            `;
+            return panel;
+        }
+
+        // Toggle accordion panel
+        function togglePanel(panel) {
+            panel.classList.toggle('expanded');
+        }
+
+        // Render markdown (basic ** support)
+        function renderMarkdown(text) {
+            return text.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+        }
+
+        // Loading state
+        function showLoading() {
+            document.getElementById('resultsSection').classList.remove('show');
+            document.getElementById('loadingState').classList.add('show');
+            document.getElementById('analyzeBtn').disabled = true;
+
+            currentMessageIndex = 0;
+            updateLoadingMessage();
+            loadingInterval = setInterval(updateLoadingMessage, 3000);
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingState').classList.remove('show');
+            document.getElementById('analyzeBtn').disabled = false;
+            if (loadingInterval) {
+                clearInterval(loadingInterval);
+            }
+        }
+
+        function updateLoadingMessage() {
+            document.getElementById('loadingMessage').textContent = LOADING_MESSAGES[currentMessageIndex];
+            currentMessageIndex = (currentMessageIndex + 1) % LOADING_MESSAGES.length;
+        }
+
+        // Error state
+        function showError(company) {
+            const banner = document.getElementById('errorBanner');
+            banner.textContent = `Could not generate brief for ${company}. The company may not be in our dataset or the service is unavailable.`;
+            banner.classList.add('show');
+            document.getElementById('resultsSection').classList.remove('show');
+        }
+
+        function hideError() {
+            document.getElementById('errorBanner').classList.remove('show');
+        }
+
+        // Enter key support
+        document.getElementById('companyInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleSearch();
+            }
+        });
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', initializeQuickSelect);
+    </script>
 </body>
 </html>
