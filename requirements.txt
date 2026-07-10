@@ -10,7 +10,7 @@ requests~=2.31
 feedparser~=6.0
 groq~=0.4
 # Observability — Langfuse tracing
-langfuse~=2.0
+langfuse>=3.0,<4.0
 # AWS — Bedrock agents
 boto3~=1.28
 neo4j~=5.0

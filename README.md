@@ -38,8 +38,8 @@ cd AI-Vendor-Intelligence-Platform
 cp .env.example .env
 # Edit .env — at minimum set DATABASE_URL and GROQ_API_KEY
 
-# 3. Install collector dependencies
-pip install -r collector/requirements.txt
+# 3. Install dependencies
+pip install -r requirements.txt
 
 # 4. (Optional) Provision infrastructure
 cd infrastructure

@@ -13,7 +13,7 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 
-from agents.llm import get_llm
+from agents.llm import get_llm, flush_traces
 from agents.specialists import (
     run_financial_agent,
     run_technology_agent,
@@ -297,6 +297,9 @@ def generate_brief(company_name: str) -> str:
     print(final_state["brief"])
     print(f"{'='*70}")
     print(f"\nTotal time: {time_str}\n")
+
+    # Flush all pending traces to Langfuse
+    flush_traces()
 
     return final_state["brief"]
 
