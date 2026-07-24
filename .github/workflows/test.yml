@@ -17,7 +17,7 @@ jobs:
           python-version: "3.11"
       
       - name: Install dependencies
-        run: pip install fastapi uvicorn requests
+        run: pip install -r requirements.txt
       
       - name: Test API health endpoint
         run: |
