@@ -4,6 +4,7 @@ import sys
 import os
 import json
 from pathlib import Path
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agents.supervisor import generate_brief
+from collector.db import get_connection
 
 # Load company names from seed file
 SEED_FILE = Path(__file__).parent.parent / "collector" / "seed_companies.json"
@@ -70,6 +72,50 @@ class CompaniesResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Brief Caching Helpers
+# ---------------------------------------------------------------------------
+
+
+def get_cached_brief(company: str) -> str | None:
+    """Retrieve cached brief for today, or None if not in cache."""
+    try:
+        conn = get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT brief FROM brief_cache
+                    WHERE company_name = %s AND cache_date = %s
+                    LIMIT 1
+                    """,
+                    (company, date.today()),
+                )
+                result = cur.fetchone()
+                return result[0] if result else None
+    except Exception as e:
+        print(f"WARNING: Cache lookup failed for {company}: {e}")
+        return None
+
+
+def save_brief_cache(company: str, brief: str) -> None:
+    """Store brief in cache for today."""
+    try:
+        conn = get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO brief_cache (company_name, brief, cache_date)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (company_name, cache_date) DO UPDATE SET brief = EXCLUDED.brief
+                    """,
+                    (company, brief, date.today()),
+                )
+    except Exception as e:
+        print(f"WARNING: Cache save failed for {company}: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Root & Health Endpoints
 # ---------------------------------------------------------------------------
 
@@ -119,7 +165,7 @@ async def get_companies():
 async def generate_brief_endpoint(request: BriefRequest):
     """Generate an intelligence brief for a company.
 
-    Takes ~20-30 seconds as it orchestrates 5 specialist agents.
+    Takes ~20-30 seconds on first request; cached responses are near-instant.
     """
     company = request.company.strip()
 
@@ -129,9 +175,22 @@ async def generate_brief_endpoint(request: BriefRequest):
 
     print(f"[API] Generating brief for: {company}")
 
+    # Check cache first
+    cached_brief = get_cached_brief(company)
+    if cached_brief:
+        print(f"[API] Cache hit for: {company}")
+        return {
+            "company": company,
+            "brief": cached_brief,
+            "status": "cached",
+        }
+
     try:
         # Generate the brief using LangGraph
         brief = generate_brief(company)
+
+        # Save to cache
+        save_brief_cache(company, brief)
 
         # Check if company was in seed (informational only)
         if company not in COMPANY_NAMES:

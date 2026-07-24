@@ -44,11 +44,54 @@ Scoring guide:
 
 
 # ---------------------------------------------------------------------------
+# Rule-based pre-classification
+# ---------------------------------------------------------------------------
+
+def classify_article_rules(title: str) -> dict | None:
+    """Classify headline with keyword rules. Returns dict if confident, None to fall through to LLM."""
+    title_lower = title.lower()
+
+    # Funding/capital
+    if any(kw in title_lower for kw in ["series a", "series b", "series c", "series d", "series e",
+                                         "funding", "raised", "investment", "venture", "capital"]):
+        return {"signal_type": "funding", "importance_score": 85, "one_line_summary": title[:150]}
+
+    # Layoffs/negative
+    if any(kw in title_lower for kw in ["layoffs", "layoff", "lay off", "cutting staff", "cuts jobs",
+                                         "bankruptcy", "bankrupt", "collapse", "shutdown", "closes"]):
+        return {"signal_type": "negative", "importance_score": 80, "one_line_summary": title[:150]}
+
+    # Partnerships
+    if any(kw in title_lower for kw in ["partnership", "partner", "collaborate", "collaboration",
+                                         "integrates with", "integration", "teams up", "allied"]):
+        return {"signal_type": "partnership", "importance_score": 60, "one_line_summary": title[:150]}
+
+    # Product launches/releases
+    if any(kw in title_lower for kw in ["launches", "release", "release", "new product", "introduces",
+                                         "unveils", "announces new", "debut", "launches new"]):
+        return {"signal_type": "product_launch", "importance_score": 70, "one_line_summary": title[:150]}
+
+    # Executive changes
+    if any(kw in title_lower for kw in ["ceo", "cto", "founder", "executive", "resign", "resigns",
+                                         "appoints", "appointed", "joins", "departs", "departure",
+                                         "leaves", "left company"]):
+        return {"signal_type": "executive_change", "importance_score": 75, "one_line_summary": title[:150]}
+
+    # Regulatory/legal
+    if any(kw in title_lower for kw in ["lawsuit", "sued", "settlement", "regulation", "regulatory",
+                                         "legal", "court", "fined", "fine", "compliance", "investigation"]):
+        return {"signal_type": "regulatory", "importance_score": 65, "one_line_summary": title[:150]}
+
+    # No confident match — fall through to LLM
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Groq classification
 # ---------------------------------------------------------------------------
 
-def classify_article(groq: Groq, company_name: str, title: str) -> dict:
-    """Call Groq to classify a news article. Returns dict with classification."""
+def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, bool]:
+    """Call Groq to classify a news article. Returns (dict, hit_rate_limit) tuple."""
     prompt = CLASSIFICATION_PROMPT.format(company_name=company_name, title=title)
     attempts = 0
     max_attempts = 2
@@ -65,7 +108,7 @@ def classify_article(groq: Groq, company_name: str, title: str) -> dict:
             )
             json_text = response.choices[0].message.content.strip()
             classification = json.loads(json_text)
-            return classification
+            return classification, False
         except Exception as exc:
             error_message = str(exc)
             # Check for 429 rate limit error
@@ -81,38 +124,51 @@ def classify_article(groq: Groq, company_name: str, title: str) -> dict:
                     time.sleep(wait)
                     continue
                 else:
-                    # Second attempt failed, fall back to defaults
-                    return {
+                    # Second attempt failed, signal rate limit and return defaults
+                    return (
+                        {
+                            "signal_type": "other",
+                            "importance_score": 30,
+                            "one_line_summary": title[:150],
+                        },
+                        True,  # hit_rate_limit = True
+                    )
+            # Non-rate-limit errors: return defaults immediately
+            elif isinstance(exc, (json.JSONDecodeError, KeyError, AttributeError)):
+                return (
+                    {
                         "signal_type": "other",
                         "importance_score": 30,
                         "one_line_summary": title[:150],
-                    }
-            # Non-rate-limit errors: return defaults immediately
-            elif isinstance(exc, (json.JSONDecodeError, KeyError, AttributeError)):
-                return {
-                    "signal_type": "other",
-                    "importance_score": 30,
-                    "one_line_summary": title[:150],
-                }
+                    },
+                    False,
+                )
             else:
                 # Other exceptions: return defaults
-                return {
-                    "signal_type": "other",
-                    "importance_score": 30,
-                    "one_line_summary": title[:150],
-                }
+                return (
+                    {
+                        "signal_type": "other",
+                        "importance_score": 30,
+                        "one_line_summary": title[:150],
+                    },
+                    False,
+                )
 
 
 # ---------------------------------------------------------------------------
 # Per-company processing
 # ---------------------------------------------------------------------------
 
-def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
-    """Fetch and classify news for a company. Returns (signals_added, errors)."""
+def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool]:
+    """Fetch and classify news for a company. Returns (signals_added, errors, hit_rate_limit).
+
+    If hit_rate_limit is True, the caller should stop processing and retry later.
+    """
     name = company["name"]
     ticker = company.get("ticker")
     signals_added = 0
     errors = 0
+    hit_rate_limit = False
 
     # Fetch Google News RSS
     url = (
@@ -123,10 +179,10 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
     try:
         feed = feedparser.parse(url)
         if not feed.entries:
-            return 0, 0
+            return 0, 0, False
     except Exception as exc:
         print(f"  News feed fetch failed for {name}: {exc}")
-        return 0, 1
+        return 0, 1, False
 
     now = datetime.now(tz=timezone.utc)
 
@@ -144,8 +200,15 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
         title = entry.get("title", "Untitled")[:300]
         link = entry.get("link", "")
 
-        # Classify with Groq
-        classification = classify_article(groq, name, entry.get("title", ""))
+        # Try rule-based classification first (saves tokens)
+        classification = classify_article_rules(title)
+        if classification is None:
+            # No confident rule match — fall through to Groq
+            classification, hit_limit = classify_article(groq, name, entry.get("title", ""))
+            if hit_limit:
+                # Rate limit hit — stop processing this company
+                return signals_added, errors, True
+
         signal_type = classification.get("signal_type", "other")
         importance_score = classification.get("importance_score", 30)
         one_line_summary = classification.get("one_line_summary", title[:150])
@@ -182,7 +245,7 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
             print(f"    [insert error] {title}: {exc}")
             errors += 1
 
-    return signals_added, errors
+    return signals_added, errors, hit_rate_limit
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +268,7 @@ def run() -> None:
     total_signals = 0
     total_errors = 0
     started_at = datetime.now(tz=timezone.utc)
+    companies_processed = 0
 
     print(f"News collector starting — {total} companies to process.\n")
 
@@ -213,26 +277,34 @@ def run() -> None:
         print(f"Processing {name} ({i}/{total})...")
 
         try:
-            signals, errors = _process_company(company, groq)
+            signals, errors, hit_rate_limit = _process_company(company, groq)
             total_signals += signals
             total_errors += errors
+            companies_processed += 1
             print(f"  -> {signals} signal(s) added, {errors} error(s).")
+
+            if hit_rate_limit:
+                print(f"  [RATE LIMIT] Hit Groq daily limit at {name}. Stopping collection.")
+                print(f"  Resume tomorrow or check token usage in Langfuse.")
+                break
+
         except Exception as exc:
             print(f"  ERROR processing {name}: {exc}")
             total_errors += 1
+            companies_processed += 1
 
         if i < total:
             time.sleep(RATE_LIMIT_SLEEP)
 
     db.log_run(
         collector_name="news_collector",
-        companies_processed=total,
+        companies_processed=companies_processed,
         signals_added=total_signals,
         errors=total_errors,
         started_at=started_at,
     )
 
-    print(f"\nDone. {total_signals} signals added, {total_errors} errors.")
+    print(f"\nDone. {total_signals} signals added, {total_errors} errors. ({companies_processed}/{total} companies processed.)")
 
 
 if __name__ == "__main__":

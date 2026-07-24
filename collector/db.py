@@ -46,6 +46,32 @@ CREATE TABLE IF NOT EXISTS collection_runs (
   started_at          TIMESTAMP,
   finished_at         TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS brief_costs (
+  id                SERIAL PRIMARY KEY,
+  company_name      TEXT NOT NULL,
+  cost_cents        INT,
+  input_tokens      INT,
+  output_tokens     INT,
+  model             TEXT,
+  date              DATE,
+  created_at        TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_brief_cost_company_date
+  ON brief_costs(company_name, date);
+
+CREATE TABLE IF NOT EXISTS brief_cache (
+  id                SERIAL PRIMARY KEY,
+  company_name      TEXT NOT NULL,
+  brief             TEXT,
+  cache_date        DATE NOT NULL,
+  created_at        TIMESTAMP DEFAULT NOW(),
+  UNIQUE(company_name, cache_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_brief_cache_company_date
+  ON brief_cache(company_name, cache_date);
 """
 
 _INSERT_SIGNAL_SQL = """
@@ -85,6 +111,14 @@ INSERT INTO collection_runs
 VALUES
   (%(collector_name)s, %(companies_processed)s, %(signals_added)s,
    %(errors)s, %(started_at)s, %(finished_at)s)
+"""
+
+_LOG_BRIEF_COST_SQL = """
+INSERT INTO brief_costs
+  (company_name, cost_cents, input_tokens, output_tokens, model, date)
+VALUES
+  (%(company_name)s, %(cost_cents)s, %(input_tokens)s, %(output_tokens)s,
+   %(model)s, %(date)s)
 """
 
 
@@ -215,6 +249,33 @@ def log_run(
         with conn:
             with conn.cursor() as cur:
                 cur.execute(_LOG_RUN_SQL, params)
+    finally:
+        conn.close()
+
+
+def log_brief_cost(
+    company_name: str,
+    cost_cents: int,
+    input_tokens: int,
+    output_tokens: int,
+    model: str,
+) -> None:
+    """Log the cost of a brief generation run."""
+    from datetime import date
+    params = {
+        "company_name": company_name,
+        "cost_cents": cost_cents,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "model": model,
+        "date": date.today(),
+    }
+
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(_LOG_BRIEF_COST_SQL, params)
     finally:
         conn.close()
 

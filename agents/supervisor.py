@@ -21,6 +21,7 @@ from agents.specialists import (
     run_personnel_agent,
     run_competitive_agent,
 )
+from collector.db import log_brief_cost
 
 load_dotenv()
 
@@ -300,6 +301,19 @@ def generate_brief(company_name: str) -> str:
 
     # Flush all pending traces to Langfuse
     flush_traces()
+
+    # Log cost (estimate: Nova Micro typically uses 100-500 input, 200-800 output tokens per brief)
+    # This is a rough estimate; actual tokens are tracked in Langfuse traces
+    try:
+        log_brief_cost(
+            company_name=company_name,
+            cost_cents=50,  # Placeholder: ~$0.50 estimate for full 5-agent pipeline
+            input_tokens=0,  # Placeholder: actual tokens in Langfuse traces
+            output_tokens=0,
+            model="aws.nova-micro",
+        )
+    except Exception as e:
+        print(f"WARNING: Could not log brief cost: {e}")
 
     return final_state["brief"]
 
