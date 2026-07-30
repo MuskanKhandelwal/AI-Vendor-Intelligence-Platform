@@ -42,6 +42,23 @@ Scoring guide:
 - regulatory: 65
 - other: 30"""
 
+FUNDING_AMOUNT_RE = re.compile(r'\$\s?(\d+(?:\.\d+)?)\s*(million|billion|[MB])\b', re.I)
+
+
+def extract_funding_amount(title: str) -> float | None:
+    """Extract a dollar amount from a headline, normalized to USD millions.
+
+    e.g. "raises $200M" -> 200.0, "raises $1.2 billion" -> 1200.0
+    """
+    match = FUNDING_AMOUNT_RE.search(title)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2).lower()
+    if unit.startswith("b"):
+        amount *= 1000
+    return amount
+
 
 # ---------------------------------------------------------------------------
 # Rule-based pre-classification
@@ -213,6 +230,10 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool]:
         importance_score = classification.get("importance_score", 30)
         one_line_summary = classification.get("one_line_summary", title[:150])
 
+        funding_amount_millions = (
+            extract_funding_amount(title) if signal_type == "funding" else None
+        )
+
         # Log to Langfuse
         trace_id = langfuse_helper.trace_signal_classification(
             company_name=name,
@@ -236,6 +257,7 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool]:
                 raw_data={
                     "feed_title": feed.feed.get("title", ""),
                     "original_title": entry.get("title", ""),
+                    "funding_amount_millions": funding_amount_millions,
                 },
                 langfuse_trace_id=trace_id,
             )

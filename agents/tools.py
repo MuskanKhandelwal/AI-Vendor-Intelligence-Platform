@@ -10,6 +10,7 @@ from neo4j import GraphDatabase
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import collector.db as db
+from agents.scoring import compute_financial_health
 
 load_dotenv()
 
@@ -48,6 +49,27 @@ def query_funding_signals(company_name: str) -> str:
         return result
     except Exception as exc:
         return f"Error querying funding signals: {exc}"
+
+
+@tool
+def compute_financial_health_score(company_name: str) -> str:
+    """Compute the Financial Health score (0-100) for a company.
+
+    This is a deterministic rubric based on collected funding, negative, and
+    executive-change signals — not a guess. Always call this and report its
+    exact score and reasoning rather than inventing your own number. If it
+    returns no data, report FINANCIAL HEALTH as UNKNOWN, not a guessed score.
+    """
+    result = compute_financial_health(company_name)
+    if result["score"] is None:
+        return f"No financial signal data available for {company_name} — report as UNKNOWN."
+
+    lines = [
+        f"FINANCIAL HEALTH SCORE: {result['score']}/100 (confidence: {result['confidence']})",
+        "Reasoning:",
+    ]
+    lines.extend(f"  {r}" for r in result["reasoning"])
+    return "\n".join(lines)
 
 
 @tool

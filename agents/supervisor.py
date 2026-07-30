@@ -25,6 +25,10 @@ from collector.db import log_brief_cost
 
 load_dotenv()
 
+# Amazon Nova Micro pricing (us regions), per AWS Bedrock pricing page.
+NOVA_MICRO_INPUT_PRICE_PER_1M = 0.035
+NOVA_MICRO_OUTPUT_PRICE_PER_1M = 0.14
+
 
 # ---------------------------------------------------------------------------
 # Define Graph State
@@ -43,6 +47,8 @@ class BriefState(TypedDict):
     competitive_output: str
     next_agent: str
     brief: str
+    input_tokens: int
+    output_tokens: int
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +104,17 @@ Return only the agent name, nothing else."""
         next_agent = remaining[0]
 
     print(f"  Supervisor → routing to: {next_agent}")
-    return {**state, "next_agent": next_agent}
+
+    usage = getattr(response, "usage_metadata", None) or {}
+    input_tokens = state.get("input_tokens", 0) + usage.get("input_tokens", 0)
+    output_tokens = state.get("output_tokens", 0) + usage.get("output_tokens", 0)
+
+    return {
+        **state,
+        "next_agent": next_agent,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -106,39 +122,77 @@ Return only the agent name, nothing else."""
 # ---------------------------------------------------------------------------
 
 
+def _accumulate(state: BriefState, in_tok: int, out_tok: int) -> tuple[int, int]:
+    """Add newly-used tokens to the running totals in state."""
+    return (
+        state.get("input_tokens", 0) + in_tok,
+        state.get("output_tokens", 0) + out_tok,
+    )
+
+
 def financial_node(state: BriefState) -> BriefState:
     """Run financial specialist agent."""
     print("  Running Financial agent...")
-    output = run_financial_agent(state["company_name"])
-    return {**state, "financial_output": output}
+    output, in_tok, out_tok = run_financial_agent(state["company_name"])
+    input_tokens, output_tokens = _accumulate(state, in_tok, out_tok)
+    return {
+        **state,
+        "financial_output": output,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 def technology_node(state: BriefState) -> BriefState:
     """Run technology specialist agent."""
     print("  Running Technology agent...")
-    output = run_technology_agent(state["company_name"])
-    return {**state, "technology_output": output}
+    output, in_tok, out_tok = run_technology_agent(state["company_name"])
+    input_tokens, output_tokens = _accumulate(state, in_tok, out_tok)
+    return {
+        **state,
+        "technology_output": output,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 def news_node(state: BriefState) -> BriefState:
     """Run news specialist agent."""
     print("  Running News agent...")
-    output = run_news_agent(state["company_name"])
-    return {**state, "news_output": output}
+    output, in_tok, out_tok = run_news_agent(state["company_name"])
+    input_tokens, output_tokens = _accumulate(state, in_tok, out_tok)
+    return {
+        **state,
+        "news_output": output,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 def personnel_node(state: BriefState) -> BriefState:
     """Run personnel specialist agent."""
     print("  Running Personnel agent...")
-    output = run_personnel_agent(state["company_name"])
-    return {**state, "personnel_output": output}
+    output, in_tok, out_tok = run_personnel_agent(state["company_name"])
+    input_tokens, output_tokens = _accumulate(state, in_tok, out_tok)
+    return {
+        **state,
+        "personnel_output": output,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 def competitive_node(state: BriefState) -> BriefState:
     """Run competitive specialist agent."""
     print("  Running Competitive agent...")
-    output = run_competitive_agent(state["company_name"])
-    return {**state, "competitive_output": output}
+    output, in_tok, out_tok = run_competitive_agent(state["company_name"])
+    input_tokens, output_tokens = _accumulate(state, in_tok, out_tok)
+    return {
+        **state,
+        "competitive_output": output,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +250,18 @@ DATA SOURCES: SEC EDGAR, GitHub, ArXiv, Google News, Neo4j competitive graph"""
 
     response = llm.invoke(prompt)
     brief = response.content if hasattr(response, "content") else str(response)
-    return {**state, "brief": brief}
+
+    usage = getattr(response, "usage_metadata", None) or {}
+    input_tokens, output_tokens = _accumulate(
+        state, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+    )
+
+    return {
+        **state,
+        "brief": brief,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +349,8 @@ def generate_brief(company_name: str) -> str:
         competitive_output="",
         next_agent="",
         brief="",
+        input_tokens=0,
+        output_tokens=0,
     )
 
     # Execute the graph
@@ -302,15 +369,27 @@ def generate_brief(company_name: str) -> str:
     # Flush all pending traces to Langfuse
     flush_traces()
 
-    # Log cost (estimate: Nova Micro typically uses 100-500 input, 200-800 output tokens per brief)
-    # This is a rough estimate; actual tokens are tracked in Langfuse traces
+    # Log real cost, computed from actual token usage returned by Bedrock on
+    # every LLM call (5 specialists + supervisor routing + synthesis).
+    input_tokens = final_state.get("input_tokens", 0)
+    output_tokens = final_state.get("output_tokens", 0)
+    cost_cents = (
+        input_tokens / 1_000_000 * NOVA_MICRO_INPUT_PRICE_PER_1M
+        + output_tokens / 1_000_000 * NOVA_MICRO_OUTPUT_PRICE_PER_1M
+    ) * 100
+
+    print(
+        f"Tokens used: {input_tokens} in / {output_tokens} out "
+        f"(${cost_cents / 100:.6f})"
+    )
+
     try:
         log_brief_cost(
             company_name=company_name,
-            cost_cents=50,  # Placeholder: ~$0.50 estimate for full 5-agent pipeline
-            input_tokens=0,  # Placeholder: actual tokens in Langfuse traces
-            output_tokens=0,
-            model="aws.nova-micro",
+            cost_cents=cost_cents,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model="us.amazon.nova-micro-v1:0",
         )
     except Exception as e:
         print(f"WARNING: Could not log brief cost: {e}")

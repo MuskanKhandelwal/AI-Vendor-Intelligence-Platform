@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS collection_runs (
 CREATE TABLE IF NOT EXISTS brief_costs (
   id                SERIAL PRIMARY KEY,
   company_name      TEXT NOT NULL,
-  cost_cents        INT,
+  cost_cents        NUMERIC(10, 6),
   input_tokens      INT,
   output_tokens     INT,
   model             TEXT,
@@ -255,7 +255,7 @@ def log_run(
 
 def log_brief_cost(
     company_name: str,
-    cost_cents: int,
+    cost_cents: float,
     input_tokens: int,
     output_tokens: int,
     model: str,
