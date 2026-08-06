@@ -178,7 +178,7 @@ def query_news_signals(company_name: str) -> str:
                 FROM ai_company_signals
                 WHERE company_name = %s
                   AND signal_type IN (
-                    'product_launch', 'partnership', 'negative',
+                    'product_launch', 'partnership', 'negative', 'reputational',
                     'regulatory', 'other', 'acquisition'
                   )
                 ORDER BY signal_date DESC

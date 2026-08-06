@@ -28,18 +28,29 @@ Headline: '{title}'
 
 Return only valid JSON with these exact fields:
 {{
-  "signal_type": one of [funding, executive_change, product_launch, partnership, negative, regulatory, other],
+  "signal_type": one of [funding, executive_change, product_launch, partnership, negative, reputational, regulatory, other],
   "importance_score": integer 0-100,
   "one_line_summary": string under 150 chars
 }}
 
+Choosing signal_type — read carefully:
+- "negative" is ONLY for genuine business/financial distress: layoffs, outages,
+  bankruptcy, insolvency, product recalls, or the company being sued. It should
+  imply the company itself is in trouble.
+- "reputational" is for controversy, criticism, geopolitical friction,
+  competitive pressure, or public-image news that is NOT financial distress —
+  e.g. "China warns of security backdoor", "faces competition from X",
+  "political risk", "criticized for Y". Do NOT label these "negative".
+- If unsure between negative and reputational, choose reputational.
+
 Scoring guide:
 - funding rounds: 85
+- negative news (layoffs, outages, lawsuits, bankruptcy): 80
 - executive changes: 75
 - product launches: 70
-- partnerships: 60
-- negative news (layoffs, outages, lawsuits): 80
 - regulatory: 65
+- reputational/controversy: 55
+- partnerships: 60
 - other: 30"""
 
 FUNDING_AMOUNT_RE = re.compile(r'\$\s?(\d+(?:\.\d+)?)\s*(million|billion|[MB])\b', re.I)

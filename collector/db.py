@@ -66,12 +66,27 @@ CREATE TABLE IF NOT EXISTS brief_cache (
   company_name      TEXT NOT NULL,
   brief             TEXT,
   cache_date        DATE NOT NULL,
+  review_status     TEXT DEFAULT 'auto_ok',
+  confidence        JSONB,
+  review_notes      TEXT,
+  reviewed_at       TIMESTAMP,
   created_at        TIMESTAMP DEFAULT NOW(),
   UNIQUE(company_name, cache_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_brief_cache_company_date
   ON brief_cache(company_name, cache_date);
+
+-- Migrations for brief_cache created before the human-review columns existed.
+-- ADD COLUMN IF NOT EXISTS is a no-op when the column is already present. These
+-- must run before any index that references the new columns.
+ALTER TABLE brief_cache ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'auto_ok';
+ALTER TABLE brief_cache ADD COLUMN IF NOT EXISTS confidence JSONB;
+ALTER TABLE brief_cache ADD COLUMN IF NOT EXISTS review_notes TEXT;
+ALTER TABLE brief_cache ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;
+
+CREATE INDEX IF NOT EXISTS idx_brief_cache_review_status
+  ON brief_cache(review_status);
 """
 
 _INSERT_SIGNAL_SQL = """

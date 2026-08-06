@@ -8,11 +8,13 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import psycopg2.extras
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agents.supervisor import generate_brief
+from agents.scoring import get_evidence
 from collector.db import get_connection
 
 # Load company names from seed file
@@ -54,6 +56,35 @@ class BriefResponse(BaseModel):
     company: str
     brief: str
     status: str
+    review_status: str = "auto_ok"
+    needs_review: bool = False
+    confidence: dict | None = None
+    evidence: dict | None = None
+
+
+class ReviewItem(BaseModel):
+    """A brief awaiting human review."""
+
+    id: int
+    company: str
+    brief: str
+    review_status: str
+    confidence: dict | None = None
+    cache_date: str
+
+
+class ReviewQueueResponse(BaseModel):
+    """List of briefs flagged for human review."""
+
+    items: list[ReviewItem]
+    count: int
+
+
+class ReviewActionRequest(BaseModel):
+    """A reviewer's decision on a flagged brief."""
+
+    notes: str | None = None
+    brief: str | None = None  # optional corrected brief text
 
 
 class HealthResponse(BaseModel):
@@ -76,40 +107,64 @@ class CompaniesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def get_cached_brief(company: str) -> str | None:
-    """Retrieve cached brief for today, or None if not in cache."""
+def get_cached_brief(company: str) -> dict | None:
+    """Retrieve today's cached brief as a dict, or None if not in cache.
+
+    Returns keys: brief, review_status, confidence.
+    """
     try:
         conn = get_connection()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT brief FROM brief_cache
+                    SELECT brief, review_status, confidence FROM brief_cache
                     WHERE company_name = %s AND cache_date = %s
                     LIMIT 1
                     """,
                     (company, date.today()),
                 )
-                result = cur.fetchone()
-                return result[0] if result else None
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return {
+                    "brief": row[0],
+                    "review_status": row[1] or "auto_ok",
+                    "confidence": row[2],
+                }
     except Exception as e:
         print(f"WARNING: Cache lookup failed for {company}: {e}")
         return None
 
 
-def save_brief_cache(company: str, brief: str) -> None:
-    """Store brief in cache for today."""
+def save_brief_cache(
+    company: str,
+    brief: str,
+    review_status: str = "auto_ok",
+    confidence: dict | None = None,
+) -> None:
+    """Store brief in cache for today, including review status and confidence."""
     try:
         conn = get_connection()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO brief_cache (company_name, brief, cache_date)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (company_name, cache_date) DO UPDATE SET brief = EXCLUDED.brief
+                    INSERT INTO brief_cache
+                        (company_name, brief, cache_date, review_status, confidence)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (company_name, cache_date) DO UPDATE SET
+                        brief = EXCLUDED.brief,
+                        review_status = EXCLUDED.review_status,
+                        confidence = EXCLUDED.confidence
                     """,
-                    (company, brief, date.today()),
+                    (
+                        company,
+                        brief,
+                        date.today(),
+                        review_status,
+                        psycopg2.extras.Json(confidence) if confidence else None,
+                    ),
                 )
     except Exception as e:
         print(f"WARNING: Cache save failed for {company}: {e}")
@@ -175,22 +230,39 @@ async def generate_brief_endpoint(request: BriefRequest):
 
     print(f"[API] Generating brief for: {company}")
 
+    # Evidence is fetched fresh from the current signals on every request (one
+    # cheap query) so briefs always show up-to-date, verifiable sources.
+    def _evidence():
+        try:
+            return get_evidence(company)
+        except Exception as e:
+            print(f"WARNING: Evidence lookup failed for {company}: {e}")
+            return None
+
     # Check cache first
-    cached_brief = get_cached_brief(company)
-    if cached_brief:
+    cached = get_cached_brief(company)
+    if cached:
         print(f"[API] Cache hit for: {company}")
+        review_status = cached["review_status"]
         return {
             "company": company,
-            "brief": cached_brief,
+            "brief": cached["brief"],
             "status": "cached",
+            "review_status": review_status,
+            "needs_review": review_status == "needs_review",
+            "confidence": cached["confidence"],
+            "evidence": _evidence(),
         }
 
     try:
-        # Generate the brief using LangGraph
-        brief = generate_brief(company)
+        # Generate the brief using LangGraph (returns brief + confidence)
+        result = generate_brief(company)
+        brief = result["brief"]
+        review_status = result["review_status"]
 
-        # Save to cache
-        save_brief_cache(company, brief)
+        # Save to cache, including confidence + review status. Serve-with-banner
+        # mode: flagged briefs are still cached and returned, just annotated.
+        save_brief_cache(company, brief, review_status, result["confidence"])
 
         # Check if company was in seed (informational only)
         if company not in COMPANY_NAMES:
@@ -202,6 +274,10 @@ async def generate_brief_endpoint(request: BriefRequest):
             "company": company,
             "brief": brief,
             "status": "success",
+            "review_status": review_status,
+            "needs_review": result["needs_review"],
+            "confidence": result["confidence"],
+            "evidence": _evidence(),
         }
 
     except Exception as exc:
@@ -210,6 +286,91 @@ async def generate_brief_endpoint(request: BriefRequest):
             status_code=500,
             detail=f"Failed to generate brief: {str(exc)}",
         )
+
+
+# ---------------------------------------------------------------------------
+# Human Review Endpoints (solo reviewer)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/review-queue", response_model=ReviewQueueResponse)
+async def review_queue():
+    """List briefs flagged for human review (review_status = 'needs_review')."""
+    try:
+        conn = get_connection()
+        with conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, company_name, brief, review_status,
+                           confidence, cache_date
+                    FROM brief_cache
+                    WHERE review_status = 'needs_review'
+                    ORDER BY cache_date DESC, company_name ASC
+                    """
+                )
+                rows = cur.fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Review queue lookup failed: {exc}")
+
+    items = [
+        {
+            "id": r["id"],
+            "company": r["company_name"],
+            "brief": r["brief"],
+            "review_status": r["review_status"],
+            "confidence": r["confidence"],
+            "cache_date": str(r["cache_date"]),
+        }
+        for r in rows
+    ]
+    return {"items": items, "count": len(items)}
+
+
+@app.post("/review/{brief_id}", response_model=BriefResponse)
+async def review_brief(brief_id: int, action: ReviewActionRequest):
+    """Approve (and optionally correct) a flagged brief.
+
+    Marks it 'reviewed', records the reviewer's notes and the review time, and
+    optionally overwrites the brief text with a human-corrected version.
+    """
+    try:
+        conn = get_connection()
+        with conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT company_name, brief FROM brief_cache WHERE id = %s",
+                    (brief_id,),
+                )
+                existing = cur.fetchone()
+                if not existing:
+                    raise HTTPException(status_code=404, detail="Brief not found")
+
+                new_brief = action.brief if action.brief is not None else existing["brief"]
+                cur.execute(
+                    """
+                    UPDATE brief_cache
+                    SET review_status = 'reviewed',
+                        brief = %s,
+                        review_notes = %s,
+                        reviewed_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (new_brief, action.notes, brief_id),
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Review update failed: {exc}")
+
+    return {
+        "company": existing["company_name"],
+        "brief": new_brief,
+        "status": "reviewed",
+        "review_status": "reviewed",
+        "needs_review": False,
+        "confidence": None,
+    }
 
 
 # ---------------------------------------------------------------------------

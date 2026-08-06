@@ -414,6 +414,164 @@
             color: #60a5fa;
             font-weight: 600;
         }
+
+        /* Confidence / human-review banner */
+        .confidence-banner {
+            display: none;
+            margin: 12px 0 20px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            border: 1px solid transparent;
+        }
+        .confidence-banner.show { display: block; }
+        .confidence-banner.warn {
+            background: rgba(234, 179, 8, 0.12);
+            border-color: rgba(234, 179, 8, 0.4);
+            color: #eab308;
+        }
+        .confidence-banner.reviewed {
+            background: rgba(34, 197, 94, 0.10);
+            border-color: rgba(34, 197, 94, 0.35);
+            color: #22c55e;
+        }
+        .confidence-banner .banner-title { font-weight: 600; }
+        .confidence-banner .banner-dims {
+            margin-top: 6px;
+            color: #94a3b8;
+            font-size: 0.82rem;
+        }
+
+        /* Reviewer panel */
+        .review-toggle {
+            margin-top: 14px;
+            background: transparent;
+            border: 1px solid #334155;
+            color: #94a3b8;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            cursor: pointer;
+        }
+        .review-toggle:hover { border-color: #475569; color: #cbd5e1; }
+        .review-count {
+            display: inline-block;
+            min-width: 18px;
+            padding: 0 6px;
+            margin-left: 6px;
+            border-radius: 9px;
+            background: #eab308;
+            color: #1e293b;
+            font-weight: 600;
+            font-size: 0.75rem;
+        }
+        .review-count.empty { background: #334155; color: #94a3b8; }
+        .review-panel {
+            display: none;
+            margin-top: 16px;
+            padding: 16px;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+        }
+        .review-panel.show { display: block; }
+        .review-panel-title { margin: 0 0 12px; font-size: 1rem; color: #e2e8f0; }
+        .review-item {
+            border: 1px solid #1e293b;
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        .review-item h4 { margin: 0 0 4px; color: #f1f5f9; }
+        .review-item .ri-meta { color: #94a3b8; font-size: 0.8rem; margin-bottom: 8px; }
+        .review-item textarea {
+            width: 100%;
+            box-sizing: border-box;
+            background: #0b1120;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 0.85rem;
+            margin-bottom: 8px;
+            resize: vertical;
+        }
+        .review-item .ri-brief {
+            max-height: 140px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-size: 0.8rem;
+            color: #cbd5e1;
+            background: #0b1120;
+            border-radius: 8px;
+            padding: 8px;
+            margin-bottom: 8px;
+        }
+        .review-item button {
+            background: #22c55e;
+            border: none;
+            color: #052e16;
+            font-weight: 600;
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .review-empty { color: #64748b; font-size: 0.85rem; }
+
+        /* Evidence & sources */
+        .evidence-section { margin-top: 28px; }
+        .evidence-section > h3 {
+            font-size: 1.05rem;
+            color: #e2e8f0;
+            margin: 0 0 4px;
+        }
+        .evidence-section > .evidence-sub {
+            color: #64748b;
+            font-size: 0.82rem;
+            margin-bottom: 16px;
+        }
+        .evidence-group { margin-bottom: 18px; }
+        .evidence-group h4 {
+            margin: 0 0 8px;
+            font-size: 0.9rem;
+            color: #60a5fa;
+            text-transform: capitalize;
+        }
+        .evidence-item {
+            display: flex;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #1e293b;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+        .evidence-item .ev-date {
+            flex-shrink: 0;
+            color: #64748b;
+            font-variant-numeric: tabular-nums;
+            width: 92px;
+        }
+        .evidence-item .ev-body { flex: 1; }
+        .evidence-item .ev-type {
+            display: inline-block;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #94a3b8;
+            background: #1e293b;
+            padding: 1px 6px;
+            border-radius: 4px;
+            margin-right: 6px;
+        }
+        .evidence-item a { color: #cbd5e1; text-decoration: none; }
+        .evidence-item a:hover { color: #60a5fa; text-decoration: underline; }
+        .evidence-item .ev-score {
+            flex-shrink: 0;
+            color: #64748b;
+            font-size: 0.78rem;
+        }
+        .evidence-empty { color: #64748b; font-size: 0.82rem; }
     </style>
 </head>
 <body>
@@ -437,6 +595,16 @@
             </div>
 
             <div class="quick-select" id="quickSelectContainer"></div>
+
+            <button id="reviewToggle" class="review-toggle" onclick="toggleReviewPanel()">
+                Review queue <span id="reviewCount" class="review-count">0</span>
+            </button>
+        </div>
+
+        <!-- Reviewer Panel (solo reviewer) -->
+        <div class="review-panel" id="reviewPanel">
+            <h3 class="review-panel-title">Briefs pending human review</h3>
+            <div id="reviewList"></div>
         </div>
 
         <!-- Error Banner -->
@@ -452,11 +620,17 @@
         <div class="results-section" id="resultsSection">
             <h2 class="company-name" id="companyName"></h2>
 
+            <!-- Confidence / human-review banner -->
+            <div class="confidence-banner" id="confidenceBanner"></div>
+
             <!-- Score Cards -->
             <div class="score-cards" id="scoreCards"></div>
 
             <!-- Accordion Panels -->
             <div class="accordion" id="accordionContainer"></div>
+
+            <!-- Evidence & Sources -->
+            <div class="evidence-section" id="evidenceSection"></div>
 
             <!-- Footer -->
             <div class="footer">
@@ -534,7 +708,7 @@
                 }
 
                 const data = await response.json();
-                renderBrief(company, data.brief);
+                renderBrief(company, data.brief, data);
             } catch (error) {
                 console.error('Error:', error);
                 showError(company);
@@ -543,47 +717,67 @@
             }
         }
 
-        // Parse brief text
+        // Parse brief text.
+        //
+        // Parsed line-by-line rather than with a single big regex, because the
+        // model varies its header format between runs: sometimes the score sits
+        // INSIDE the bold ("**FINANCIAL HEALTH: 75/100**"), sometimes OUTSIDE
+        // ("**FINANCIAL HEALTH:** 75/100"), and the Executive Summary body now
+        // contains its own bold markdown (**Recommendation:**, - **Verdict:**).
+        // A header is defined as a line that STARTS with ** followed by an
+        // ALL-CAPS label and a colon — everything else is section body. This
+        // keeps inner bold (mixed-case labels like "Recommendation") as body.
         function parseBrief(briefText) {
-            const result = {
-                sections: {},
-                scores: {},
-                sentiment: null
+            const result = { sections: {}, scores: {}, sentiment: null };
+            const headerRe = /^\*\*\s*([A-Z][A-Z0-9 &\/]*?)\s*:\s*(.*)$/;
+
+            let current = null;
+            let buffer = [];
+            const flush = () => {
+                if (current !== null) {
+                    result.sections[current] = buffer.join('\n')
+                        .replace(/\*+\s*$/, '').trim();
+                }
             };
 
-            // Extract scores
-            const scorePattern = /\*\*([A-Z\s&]+?):\s*(\d+)\/100\*\*/g;
-            let match;
-            while ((match = scorePattern.exec(briefText)) !== null) {
-                const label = match[1].trim();
-                const score = parseInt(match[2]);
-                result.scores[label] = score;
-            }
+            briefText.split('\n').forEach((line) => {
+                const m = line.match(headerRe);
+                if (!m) { buffer.push(line); return; }
 
-            // Extract sentiment
-            const sentimentPattern = /\*\*NEWS\s*&\s*SENTIMENT:\s*(Positive|Neutral|Negative)\*\*/i;
-            const sentimentMatch = briefText.match(sentimentPattern);
-            if (sentimentMatch) {
-                result.sentiment = sentimentMatch[1];
-            }
+                flush();
+                current = m[1].trim();
+                buffer = [];
 
-            // Extract sections (text between ** headers)
-            const sectionPattern = /\*\*([^*]+?):?\*\*\s*\n([\s\S]*?)(?=\*\*|$)/g;
-            while ((match = sectionPattern.exec(briefText)) !== null) {
-                let title = match[1].trim();
-                let content = match[2].trim();
-                result.sections[title] = content;
-            }
+                // Inline value on the header line (strip bold markers).
+                const inline = (m[2] || '').replace(/\*+/g, '').trim();
+
+                if (/^NEWS\s*&\s*SENTIMENT$/i.test(current)) {
+                    const s = inline.match(/(positive|neutral|negative)/i);
+                    if (s) {
+                        result.sentiment = s[1][0].toUpperCase() +
+                            s[1].slice(1).toLowerCase();
+                    }
+                }
+                if (/HEALTH|MOMENTUM|STABILITY/i.test(current)) {
+                    const sc = inline.match(/(\d+)\s*\/\s*100/) ||
+                        inline.match(/^(\d{1,3})\b/);
+                    if (sc) result.scores[current] = parseInt(sc[1]);
+                }
+            });
+            flush();
 
             return result;
         }
 
         // Render brief results
-        function renderBrief(company, briefText) {
+        function renderBrief(company, briefText, meta = {}) {
             const parsed = parseBrief(briefText);
 
             // Company name
             document.getElementById('companyName').textContent = company;
+
+            // Confidence / human-review banner
+            renderConfidenceBanner(meta);
 
             // Score cards
             renderScoreCards(parsed.scores, parsed.sentiment);
@@ -591,12 +785,105 @@
             // Accordion panels
             renderAccordion(parsed.sections);
 
+            // Evidence & sources
+            renderEvidence(meta.evidence);
+
             // Timestamp
             const now = new Date();
             document.getElementById('timestamp').textContent = `Generated ${now.toLocaleTimeString()}`;
 
             // Show results
             document.getElementById('resultsSection').classList.add('show');
+        }
+
+        // Render the confidence / human-review banner
+        function renderConfidenceBanner(meta) {
+            const banner = document.getElementById('confidenceBanner');
+            banner.className = 'confidence-banner';
+            banner.innerHTML = '';
+
+            const status = meta.review_status;
+            if (status === 'needs_review') {
+                banner.classList.add('show', 'warn');
+                const anomalies = (meta.confidence && meta.confidence.anomalies) || [];
+                const anomalyMarkup = anomalies.length
+                    ? `<div class="banner-dims">Anomalies: ${anomalies.map(escapeHtml).join(' · ')}</div>`
+                    : '';
+                banner.innerHTML =
+                    `<div class="banner-title">⚠ Low confidence — pending human review</div>` +
+                    `<div>This brief was generated from limited or noisy data and has not yet been verified by a reviewer. Treat scores as provisional.</div>` +
+                    anomalyMarkup +
+                    dimsMarkup(meta.confidence);
+            } else if (status === 'reviewed') {
+                banner.classList.add('show', 'reviewed');
+                banner.innerHTML =
+                    `<div class="banner-title">✓ Reviewed by a human</div>` +
+                    `<div>This brief was flagged for low confidence and has since been verified by a reviewer.</div>`;
+            }
+            // 'auto_ok' → no banner
+        }
+
+        // Render the evidence / sources behind the brief
+        const EVIDENCE_LABELS = {
+            financial: 'Financial signals',
+            technology: 'Technology signals',
+            news: 'News & sentiment',
+            personnel: 'Personnel changes',
+        };
+
+        function renderEvidence(evidence) {
+            const container = document.getElementById('evidenceSection');
+            container.innerHTML = '';
+            if (!evidence) return;
+
+            const total = Object.values(evidence)
+                .reduce((n, items) => n + (items ? items.length : 0), 0);
+            if (total === 0) return;
+
+            const heading = document.createElement('h3');
+            heading.textContent = 'Evidence & sources';
+            const sub = document.createElement('div');
+            sub.className = 'evidence-sub';
+            sub.textContent = `${total} collected signals backing this brief — click any headline to verify the source.`;
+            container.appendChild(heading);
+            container.appendChild(sub);
+
+            ['financial', 'technology', 'news', 'personnel'].forEach((dim) => {
+                const items = evidence[dim] || [];
+                if (items.length === 0) return;
+                const group = document.createElement('div');
+                group.className = 'evidence-group';
+                const h4 = document.createElement('h4');
+                h4.textContent = `${EVIDENCE_LABELS[dim] || dim} (${items.length})`;
+                group.appendChild(h4);
+                items.forEach((it) => group.appendChild(createEvidenceItem(it)));
+                container.appendChild(group);
+            });
+        }
+
+        function createEvidenceItem(it) {
+            const row = document.createElement('div');
+            row.className = 'evidence-item';
+            const headline = escapeHtml(it.headline || '(no headline)');
+            const linked = it.source_url
+                ? `<a href="${escapeHtml(it.source_url)}" target="_blank" rel="noopener">${headline}</a>`
+                : headline;
+            const score = (it.importance !== null && it.importance !== undefined)
+                ? `<span class="ev-score">${it.importance}</span>` : '';
+            row.innerHTML =
+                `<span class="ev-date">${it.date || '—'}</span>` +
+                `<span class="ev-body"><span class="ev-type">${escapeHtml(it.signal_type || '')}</span>${linked}</span>` +
+                score;
+            return row;
+        }
+
+        // Render a compact per-dimension confidence line
+        function dimsMarkup(confidence) {
+            if (!confidence || !confidence.dimensions) return '';
+            const parts = Object.entries(confidence.dimensions).map(
+                ([dim, info]) => `${dim}: ${info.level}`
+            );
+            return `<div class="banner-dims">Confidence by dimension — ${parts.join(' · ')}</div>`;
         }
 
         // Render score cards
@@ -705,7 +992,10 @@
 
         // Render markdown (basic ** support)
         function renderMarkdown(text) {
-            return text.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+            return text
+                .replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/^\s*[-*]\s+/gm, '• ')
+                .replace(/\n/g, '<br>');
         }
 
         // Loading state
@@ -751,8 +1041,91 @@
             }
         });
 
+        // ---------------------------------------------------------------
+        // Reviewer panel (solo reviewer)
+        // ---------------------------------------------------------------
+
+        async function refreshReviewCount() {
+            try {
+                const res = await fetch(`${API_BASE}/review-queue`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const badge = document.getElementById('reviewCount');
+                badge.textContent = data.count;
+                badge.classList.toggle('empty', data.count === 0);
+                return data;
+            } catch (e) {
+                console.error('Review count refresh failed:', e);
+            }
+        }
+
+        async function toggleReviewPanel() {
+            const panel = document.getElementById('reviewPanel');
+            const opening = !panel.classList.contains('show');
+            panel.classList.toggle('show', opening);
+            if (opening) await loadReviewQueue();
+        }
+
+        async function loadReviewQueue() {
+            const list = document.getElementById('reviewList');
+            list.innerHTML = '<div class="review-empty">Loading…</div>';
+            const data = await refreshReviewCount();
+            if (!data || data.count === 0) {
+                list.innerHTML = '<div class="review-empty">Nothing pending review. 🎉</div>';
+                return;
+            }
+            list.innerHTML = '';
+            data.items.forEach((item) => list.appendChild(createReviewItem(item)));
+        }
+
+        function createReviewItem(item) {
+            const el = document.createElement('div');
+            el.className = 'review-item';
+            const overall = item.confidence ? item.confidence.overall : 'unknown';
+            el.innerHTML =
+                `<h4>${item.company}</h4>` +
+                `<div class="ri-meta">${item.cache_date} · overall confidence: ${overall}</div>` +
+                `<div class="ri-brief">${escapeHtml(item.brief)}</div>` +
+                `<textarea rows="2" placeholder="Reviewer notes / corrected brief (optional)"></textarea>` +
+                `<button>Approve</button>`;
+            const textarea = el.querySelector('textarea');
+            el.querySelector('button').addEventListener('click', () =>
+                approveBrief(item.id, textarea.value, el)
+            );
+            return el;
+        }
+
+        async function approveBrief(id, notes, el) {
+            const btn = el.querySelector('button');
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+            try {
+                const res = await fetch(`${API_BASE}/review/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notes: notes || null }),
+                });
+                if (!res.ok) throw new Error(`API error: ${res.status}`);
+                el.remove();
+                await loadReviewQueue();
+            } catch (e) {
+                console.error('Approve failed:', e);
+                btn.disabled = false;
+                btn.textContent = 'Retry';
+            }
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s || '';
+            return d.innerHTML;
+        }
+
         // Initialize
-        document.addEventListener('DOMContentLoaded', initializeQuickSelect);
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeQuickSelect();
+            refreshReviewCount();
+        });
     </script>
 </body>
 </html>

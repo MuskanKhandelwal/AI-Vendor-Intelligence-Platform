@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 
 from agents.llm import get_llm, flush_traces
+from agents.scoring import compute_confidence
 from agents.specialists import (
     run_financial_agent,
     run_technology_agent,
@@ -49,6 +50,8 @@ class BriefState(TypedDict):
     brief: str
     input_tokens: int
     output_tokens: int
+    confidence: dict
+    needs_review: bool
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +208,7 @@ def synthesis_node(state: BriefState) -> BriefState:
     print("  Synthesizing final brief...")
     llm = get_llm(temperature=0.3)
 
-    prompt = f"""Synthesize this vendor intelligence brief from specialist agent analyses.
+    prompt = f"""Synthesize a vendor intelligence brief from the specialist analyses below.
 
 Company: {state["company_name"]}
 
@@ -224,27 +227,53 @@ PERSONNEL ANALYSIS:
 COMPETITIVE ANALYSIS:
 {state.get("competitive_output", "No data")}
 
+CRITICAL WRITING RULES — this brief is for procurement decisions, so it must be
+SPECIFIC and EVIDENCE-BACKED, not generic:
+1. Every sentence must reference a CONCRETE fact from the analyses above:
+   an exact dollar amount, a date, a count (e.g. "8 GitHub releases"), a named
+   competitor, a specific product/paper name, or a named person.
+2. Do NOT write generic filler that could apply to any company (e.g. "a
+   prominent player facing regulatory challenges"). If a sentence would be true
+   of any AI vendor, delete it.
+3. If a dimension has no supporting data, write "UNKNOWN — no data collected"
+   rather than inventing plausible-sounding prose. Never guess.
+4. Prefer numbers and dates over adjectives. "Raised $450M in March 2026" beats
+   "well-funded". Cite the specifics the specialists surfaced.
+
 Produce a structured brief with these exact sections:
 
 VENDOR INTELLIGENCE BRIEF: {state["company_name"]}
 
-FINANCIAL HEALTH: [score/100]
-[2-3 sentences from financial data]
+FINANCIAL HEALTH: [score/100 or UNKNOWN]
+[2-3 sentences citing specific funding amounts, dates, filings, or distress signals]
 
-TECHNOLOGY MOMENTUM: [score/100]
-[2-3 sentences from technology data]
+TECHNOLOGY MOMENTUM: [score/100 or UNKNOWN]
+[2-3 sentences citing specific repos, release counts, or named research papers]
 
 NEWS & SENTIMENT: [positive/neutral/negative]
-[2-3 sentences from news data]
+[2-3 sentences citing specific recent headlines/events with dates]
 
-PERSONNEL STABILITY: [score/100]
-[2-3 sentences from personnel data]
+PERSONNEL STABILITY: [score/100 or UNKNOWN]
+[2-3 sentences citing specific named executive changes and dates]
 
 COMPETITIVE POSITION:
-[2-3 sentences from competitive data]
+[2-3 sentences naming specific competitors and how the company is positioned vs them]
 
 EXECUTIVE SUMMARY:
-[3-4 sentences synthesizing everything into a procurement recommendation]
+Recommendation: [Recommended / Recommended with caution / Not recommended / Insufficient data]
+Write this as a procurement decision, following this structure exactly:
+- Verdict: one sentence stating the recommendation and the single biggest
+  reason for it, citing one specific fact (a number, date, or named event).
+- Strengths: the 2 strongest reasons to buy, each tied to a concrete figure,
+  date, or name (e.g. "$3.5B round on 2026-07-04", "75 GitHub releases in 90 days").
+- Risks: the 1-2 most material concerns, each tied to a specific event or gap
+  (e.g. "Microsoft dropped Anthropic from its products on 2026-07-08", or
+  "no personnel data collected — leadership stability unverified").
+- Next step: what the buyer should verify or monitor before committing.
+Hard rules for this section: do NOT restate the section scores as prose. Do NOT
+use vague phrases like "promising outlook", "well positioned", "strong market
+presence", "compelling option", or "committed to responsible AI" — every clause
+must carry a concrete, checkable fact. If evidence is thin, say so plainly.
 
 DATA SOURCES: SEC EDGAR, GitHub, ArXiv, Google News, Neo4j competitive graph"""
 
@@ -256,12 +285,48 @@ DATA SOURCES: SEC EDGAR, GitHub, ArXiv, Google News, Neo4j competitive graph"""
         state, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
     )
 
+    # Deterministic, evidence-based confidence — no LLM call, so no added
+    # latency. A low-confidence brief is flagged for human review; in
+    # serve-with-banner mode it still ships, just annotated.
+    confidence = compute_confidence(state["company_name"])
+    brief = _append_confidence_section(brief, confidence)
+
     return {
         **state,
         "brief": brief,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "confidence": confidence,
+        "needs_review": confidence["needs_review"],
     }
+
+
+def _append_confidence_section(brief: str, confidence: dict) -> str:
+    """Append a human-readable DATA CONFIDENCE section to the brief text."""
+    lines = ["", "DATA CONFIDENCE:"]
+    anomalies = confidence.get("anomalies", [])
+    if confidence["needs_review"]:
+        reason = "thin evidence in one or more dimensions"
+        if anomalies:
+            reason = "data-quality anomalies detected"
+        lines.append(
+            f"⚠ Overall: {confidence['overall'].upper()} — flagged for human "
+            f"review ({reason})."
+        )
+        for a in anomalies:
+            lines.append(f"    • {a}")
+    else:
+        lines.append(
+            f"Overall: {confidence['overall'].upper()} — sufficient evidence "
+            "across all dimensions."
+        )
+    for dim, info in confidence["dimensions"].items():
+        if info["level"] == "unknown":
+            detail = "data source unavailable"
+        else:
+            detail = f"{info['evidence_count']} signals"
+        lines.append(f"  - {dim.capitalize()}: {info['level']} ({detail})")
+    return brief + "\n" + "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -329,8 +394,15 @@ def build_graph():
 # ---------------------------------------------------------------------------
 
 
-def generate_brief(company_name: str) -> str:
-    """Generate a vendor intelligence brief using LangGraph."""
+def generate_brief(company_name: str) -> dict:
+    """Generate a vendor intelligence brief using LangGraph.
+
+    Returns a dict with:
+      - `brief`: the brief text (including the DATA CONFIDENCE section)
+      - `confidence`: per-dimension confidence dict from compute_confidence()
+      - `needs_review`: bool — True when a human should review before it ships
+      - `review_status`: "needs_review" or "auto_ok"
+    """
     print(f"\n{'='*70}")
     print(f"Generating intelligence brief: {company_name}")
     print(f"{'='*70}\n")
@@ -351,6 +423,8 @@ def generate_brief(company_name: str) -> str:
         brief="",
         input_tokens=0,
         output_tokens=0,
+        confidence={},
+        needs_review=False,
     )
 
     # Execute the graph
@@ -364,6 +438,12 @@ def generate_brief(company_name: str) -> str:
     print(f"\n{'='*70}")
     print(final_state["brief"])
     print(f"{'='*70}")
+    if final_state.get("needs_review"):
+        conf = final_state.get("confidence", {})
+        print(f"⚠ REVIEW STATUS: needs_review (overall confidence: "
+              f"{conf.get('overall', 'unknown')})")
+    else:
+        print("REVIEW STATUS: auto_ok")
     print(f"\nTotal time: {time_str}\n")
 
     # Flush all pending traces to Langfuse
@@ -394,7 +474,13 @@ def generate_brief(company_name: str) -> str:
     except Exception as e:
         print(f"WARNING: Could not log brief cost: {e}")
 
-    return final_state["brief"]
+    needs_review = final_state.get("needs_review", False)
+    return {
+        "brief": final_state["brief"],
+        "confidence": final_state.get("confidence", {}),
+        "needs_review": needs_review,
+        "review_status": "needs_review" if needs_review else "auto_ok",
+    }
 
 
 # ---------------------------------------------------------------------------
