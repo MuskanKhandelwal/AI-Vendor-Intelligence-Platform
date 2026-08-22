@@ -29,12 +29,9 @@ def get_langfuse_callback():
         return None
 
     try:
-        host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
-        _langfuse_callback = CallbackHandler(
-            public_key=public_key,
-            secret_key=secret_key,
-            host=host,
-        )
+        # Langfuse v3+ reads credentials (public/secret key, host) from the
+        # environment via its global client — the handler takes no kwargs.
+        _langfuse_callback = CallbackHandler()
         return _langfuse_callback
     except Exception as exc:
         print(f"WARNING: Could not initialize Langfuse callback: {exc}")
@@ -64,8 +61,15 @@ def get_llm(temperature=0.1):
 def flush_traces():
     """Flush all pending traces to Langfuse.
 
-    Call this before process exit to ensure traces are sent.
+    Call this before process exit to ensure traces are sent. In Langfuse v3+
+    flushing lives on the client, not the LangChain callback handler.
     """
-    callback = get_langfuse_callback()
-    if callback:
-        callback.flush()
+    if get_langfuse_callback() is None:
+        return
+
+    try:
+        from langfuse import get_client
+
+        get_client().flush()
+    except Exception as exc:
+        print(f"WARNING: Could not flush Langfuse traces: {exc}")

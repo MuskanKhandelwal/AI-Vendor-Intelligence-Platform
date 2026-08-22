@@ -108,6 +108,14 @@ WHERE company_name = %(company_name)s
 LIMIT 1
 """
 
+_UPDATE_SIGNAL_SUMMARY_SQL = """
+UPDATE ai_company_signals
+SET    summary           = %(summary)s,
+       raw_data          = %(raw_data)s,
+       langfuse_trace_id = %(langfuse_trace_id)s
+WHERE  id = %(signal_id)s
+"""
+
 _GET_SIGNALS_SQL = """
 SELECT id, company_name, ticker, signal_type, signal_date, headline,
        summary, source_url, importance_score, raw_data,
@@ -218,6 +226,34 @@ def insert_signal(
         conn.close()
 
     return True
+
+
+def update_signal_summary(
+    signal_id: int,
+    summary: str,
+    raw_data: dict,
+    *,
+    langfuse_trace_id: str | None = None,
+) -> None:
+    """Rewrite an existing signal's summary and raw_data in place.
+
+    Only these columns are touched; the row's identity (company, headline,
+    date, type, source_url, importance_score) is left untouched.
+    """
+    params = {
+        "signal_id": signal_id,
+        "summary": summary,
+        "raw_data": psycopg2.extras.Json(raw_data or {}),
+        "langfuse_trace_id": langfuse_trace_id,
+    }
+
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(_UPDATE_SIGNAL_SUMMARY_SQL, params)
+    finally:
+        conn.close()
 
 
 def get_signals(

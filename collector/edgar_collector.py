@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,9 +24,16 @@ SEED_FILE = Path(__file__).parent / "seed_companies.json"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 RATE_LIMIT_SLEEP = 1  # seconds between companies
 
+NO_TEXT = "No description available"
+
 SUMMARY_PROMPT = (
     "In one sentence, explain why this SEC filing signal matters to an "
-    "enterprise evaluating this AI vendor as a potential partner: {headline}"
+    "enterprise evaluating this AI vendor as a potential partner.\n\n"
+    "Headline: {headline}\n"
+    "Filing excerpt: {context}\n\n"
+    f"Ground your summary in the excerpt. If the excerpt says '{NO_TEXT}', "
+    "rely on the headline alone and keep the summary generic rather than "
+    "inventing detail."
 )
 
 
@@ -68,7 +76,7 @@ def _business_description(filing) -> str:
         business = getattr(tenk, "business", None)
         if business:
             text = str(business).strip()
-            return text[:300] if text else "No description available"
+            return text[:300] if text else NO_TEXT
     except Exception:
         pass
 
@@ -79,11 +87,11 @@ def _business_description(filing) -> str:
         idx = upper.find("ITEM 1.")
         if idx != -1:
             snippet = text[idx + 7 : idx + 307].strip()
-            return snippet if snippet else "No description available"
+            return snippet if snippet else NO_TEXT
     except Exception:
         pass
 
-    return "No description available"
+    return NO_TEXT
 
 
 def _eightk_items(filing) -> list[str]:
@@ -100,13 +108,57 @@ def _has_item_502(items: list[str]) -> bool:
     return any("5.02" in item for item in items)
 
 
+ITEM_502_CHARS = 900
+
+# Every Item 5.02 opens with the same boilerplate title, which covers
+# departures, elections AND compensation changes. Left in, it burns ~155 chars
+# of context and tempts the LLM to report a "departure" the filing body never
+# mentions, so strip it and let the actual narrative speak.
+_ITEM_502_HEADER_RE = re.compile(
+    r"^\s*Item\s*5\.02[.:]?\s*(?:Departure of Directors[^\n]*)?", re.I
+)
+
+
+def _item_502_text(filing) -> str:
+    """Extract the narrative text of an 8-K's Item 5.02 (officer changes).
+
+    Mirrors _business_description: try the structured edgartools object first,
+    then fall back to searching the raw filing text. Never raises.
+    """
+    try:
+        # edgartools' 8-K object supports item lookup by key, e.g. obj["Item 5.02"]
+        text = filing.obj()["Item 5.02"]
+        if text:
+            snippet = _ITEM_502_HEADER_RE.sub("", str(text), count=1).strip()
+            return snippet[:ITEM_502_CHARS] if snippet else NO_TEXT
+    except Exception:
+        pass
+
+    try:
+        text = filing.text()
+        upper = text.upper()
+        idx = upper.find("ITEM 5.02")
+        if idx != -1:
+            snippet = _ITEM_502_HEADER_RE.sub(
+                "", text[idx : idx + ITEM_502_CHARS + 200], count=1
+            ).strip()
+            return snippet[:ITEM_502_CHARS] if snippet else NO_TEXT
+    except Exception:
+        pass
+
+    return NO_TEXT
+
+
 # ---------------------------------------------------------------------------
 # LLM summary
 # ---------------------------------------------------------------------------
 
-def _generate_summary(groq: Groq, headline: str, company_name: str, signal_type: str, importance_score: int) -> tuple[str, str | None]:
-    """Call Groq to summarise the signal. Returns (summary, trace_id)."""
-    prompt = SUMMARY_PROMPT.format(headline=headline)
+def _generate_summary(groq: Groq, headline: str, company_name: str, signal_type: str, importance_score: int, context: str = NO_TEXT) -> tuple[str, str | None]:
+    """Call Groq to summarise the signal, grounded in extracted filing text.
+
+    Returns (summary, trace_id).
+    """
+    prompt = SUMMARY_PROMPT.format(headline=headline, context=context)
     response = groq.chat.completions.create(
         model=GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
@@ -150,7 +202,7 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
                 f"{name} filed 10-K for fiscal year ending {filing_date}"
             )
             summary, trace_id = _generate_summary(
-                groq, headline, name, "annual_filing", 40
+                groq, headline, name, "annual_filing", 40, context=description
             )
             inserted = db.insert_signal(
                 company_name=name,
@@ -161,7 +213,10 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
                 summary=summary,
                 source_url=f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker}&type=10-K",
                 importance_score=40,
-                raw_data={"description": description},
+                raw_data={
+                    "description": description,
+                    "extraction_ok": description != NO_TEXT,
+                },
                 langfuse_trace_id=trace_id,
             )
             if inserted:
@@ -185,11 +240,13 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
                 if not _has_item_502(items):
                     continue  # only create signals for executive changes
 
+                item_502_text = _item_502_text(filing)
                 headline = (
                     f"{name}: officer change disclosed in 8-K ({filing_date})"
                 )
                 summary, trace_id = _generate_summary(
-                    groq, headline, name, "executive_change", 75
+                    groq, headline, name, "executive_change", 75,
+                    context=item_502_text,
                 )
                 inserted = db.insert_signal(
                     company_name=name,
@@ -200,7 +257,11 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
                     summary=summary,
                     source_url=f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker}&type=8-K",
                     importance_score=75,
-                    raw_data={"items": items_str},
+                    raw_data={
+                        "items": items_str,
+                        "item_502_text": item_502_text,
+                        "extraction_ok": item_502_text != NO_TEXT,
+                    },
                     langfuse_trace_id=trace_id,
                 )
                 if inserted:

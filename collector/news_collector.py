@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import feedparser
 from dotenv import load_dotenv
@@ -16,6 +17,7 @@ from groq import Groq
 sys.path.insert(0, os.path.dirname(__file__))
 import db
 import langfuse_helper
+from entity_filter import check_entity, news_query
 
 load_dotenv()
 
@@ -23,15 +25,33 @@ SEED_FILE = Path(__file__).parent / "seed_companies.json"
 RATE_LIMIT_SLEEP = 1  # seconds between companies
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-CLASSIFICATION_PROMPT = """Classify this news headline about the AI company {company_name}.
+CLASSIFICATION_PROMPT = """You are screening news for a procurement intelligence
+platform that tracks {company_name}, an AI/machine-learning technology vendor.
+
 Headline: '{title}'
 
 Return only valid JSON with these exact fields:
 {{
+  "about_company": true or false,
   "signal_type": one of [funding, executive_change, product_launch, partnership, negative, reputational, regulatory, other],
   "importance_score": integer 0-100,
   "one_line_summary": string under 150 chars
 }}
+
+FIRST decide "about_company" — this matters more than the category:
+- Company names are not unique. Unrelated organisations share names with the AI
+  vendors we track (e.g. "Cohere Health" is a health-insurance company and
+  "Cohere Technologies" is a wireless-RF company; neither is the AI vendor
+  Cohere). Several vendor names are also ordinary English words.
+- Set "about_company": false when the headline is about a DIFFERENT organisation
+  that merely shares the name, or when the name is used as a common word rather
+  than as a company (e.g. "investors are adept at spotting AI hype").
+- Signals that the headline is a namesake, not the AI vendor: subject matter far
+  outside AI/software — telecom RF and radio hardware, defence radar, health
+  insurance and clinical operations, aviation, fashion, consumer packaged goods.
+- Set "about_company": true only if the headline plausibly concerns the AI/ML
+  technology vendor. If genuinely uncertain, set false — a wrong-company signal
+  becomes a false claim in a procurement brief.
 
 Choosing signal_type — read carefully:
 - "negative" is ONLY for genuine business/financial distress: layoffs, outages,
@@ -155,6 +175,9 @@ def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, b
                     # Second attempt failed, signal rate limit and return defaults
                     return (
                         {
+                            # Fail open on API failure: the deterministic
+                            # entity filter has already vetted this headline.
+                            "about_company": True,
                             "signal_type": "other",
                             "importance_score": 30,
                             "one_line_summary": title[:150],
@@ -165,6 +188,7 @@ def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, b
             elif isinstance(exc, (json.JSONDecodeError, KeyError, AttributeError)):
                 return (
                     {
+                        "about_company": True,
                         "signal_type": "other",
                         "importance_score": 30,
                         "one_line_summary": title[:150],
@@ -175,6 +199,7 @@ def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, b
                 # Other exceptions: return defaults
                 return (
                     {
+                        "about_company": True,
                         "signal_type": "other",
                         "importance_score": 30,
                         "one_line_summary": title[:150],
@@ -187,30 +212,35 @@ def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, b
 # Per-company processing
 # ---------------------------------------------------------------------------
 
-def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool]:
-    """Fetch and classify news for a company. Returns (signals_added, errors, hit_rate_limit).
+def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool, int]:
+    """Fetch and classify news for a company.
 
+    Returns (signals_added, errors, hit_rate_limit, rejected), where `rejected`
+    counts headlines dropped because they are about a different organisation.
     If hit_rate_limit is True, the caller should stop processing and retry later.
     """
     name = company["name"]
     ticker = company.get("ticker")
     signals_added = 0
     errors = 0
+    rejected = 0
     hit_rate_limit = False
 
-    # Fetch Google News RSS
+    # Fetch Google News RSS. The query excludes known namesakes upstream so
+    # colliding organisations never enter the feed in the first place.
+    query = quote_plus(news_query(company))
     url = (
         f"https://news.google.com/rss/search"
-        f"?q={name.replace(' ', '+')}+AI&hl=en-US&gl=US&ceid=US:en"
+        f"?q={query}&hl=en-US&gl=US&ceid=US:en"
     )
 
     try:
         feed = feedparser.parse(url)
         if not feed.entries:
-            return 0, 0, False
+            return 0, 0, False, 0
     except Exception as exc:
         print(f"  News feed fetch failed for {name}: {exc}")
-        return 0, 1, False
+        return 0, 1, False, 0
 
     now = datetime.now(tz=timezone.utc)
 
@@ -228,6 +258,14 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool]:
         title = entry.get("title", "Untitled")[:300]
         link = entry.get("link", "")
 
+        # Deterministic entity check before anything else: Google News matches
+        # on the name alone, so namesake organisations still slip through.
+        verdict = check_entity(company, title, entry.get("summary", ""))
+        if not verdict.ok:
+            rejected += 1
+            print(f"    [skip: {verdict.reason}] {title[:70]}")
+            continue
+
         # Try rule-based classification first (saves tokens)
         classification = classify_article_rules(title)
         if classification is None:
@@ -235,7 +273,14 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool]:
             classification, hit_limit = classify_article(groq, name, entry.get("title", ""))
             if hit_limit:
                 # Rate limit hit — stop processing this company
-                return signals_added, errors, True
+                return signals_added, errors, True, rejected
+
+        # The LLM is the second line of defence for namesakes the seed config
+        # doesn't know about. Rule-matched headlines skip it and default to True.
+        if classification.get("about_company", True) is False:
+            rejected += 1
+            print(f"    [skip: classifier says not this company] {title[:70]}")
+            continue
 
         signal_type = classification.get("signal_type", "other")
         importance_score = classification.get("importance_score", 30)
@@ -278,7 +323,7 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool]:
             print(f"    [insert error] {title}: {exc}")
             errors += 1
 
-    return signals_added, errors, hit_rate_limit
+    return signals_added, errors, hit_rate_limit, rejected
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +345,7 @@ def run() -> None:
     total = len(all_companies)
     total_signals = 0
     total_errors = 0
+    total_rejected = 0
     started_at = datetime.now(tz=timezone.utc)
     companies_processed = 0
 
@@ -310,11 +356,15 @@ def run() -> None:
         print(f"Processing {name} ({i}/{total})...")
 
         try:
-            signals, errors, hit_rate_limit = _process_company(company, groq)
+            signals, errors, hit_rate_limit, rejected = _process_company(company, groq)
             total_signals += signals
             total_errors += errors
+            total_rejected += rejected
             companies_processed += 1
-            print(f"  -> {signals} signal(s) added, {errors} error(s).")
+            print(
+                f"  -> {signals} signal(s) added, {rejected} rejected "
+                f"(wrong entity), {errors} error(s)."
+            )
 
             if hit_rate_limit:
                 print(f"  [RATE LIMIT] Hit Groq daily limit at {name}. Stopping collection.")
@@ -337,7 +387,11 @@ def run() -> None:
         started_at=started_at,
     )
 
-    print(f"\nDone. {total_signals} signals added, {total_errors} errors. ({companies_processed}/{total} companies processed.)")
+    print(
+        f"\nDone. {total_signals} signals added, {total_rejected} rejected as "
+        f"wrong-entity, {total_errors} errors. "
+        f"({companies_processed}/{total} companies processed.)"
+    )
 
 
 if __name__ == "__main__":

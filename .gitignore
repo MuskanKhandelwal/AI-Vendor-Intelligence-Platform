@@ -33,3 +33,9 @@ Thumbs.db
 
 # Misc
 .claude/
+
+# Row dumps written by collector/audit_entities.py before purging signals
+backups/
+
+# Ad-hoc ai_company_signals exports pulled for manual inspection
+*_rows.csv
