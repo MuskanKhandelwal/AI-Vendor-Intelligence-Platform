@@ -2,6 +2,7 @@
 
 import sys
 import os
+import re
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -208,7 +209,21 @@ def synthesis_node(state: BriefState) -> BriefState:
     print("  Synthesizing final brief...")
     llm = get_llm(temperature=0.3)
 
+    # Computed before synthesis so the model is told which dimensions have no
+    # evidence, rather than being left to infer it from empty analyses.
+    confidence = compute_confidence(state["company_name"])
+    empty_sections = _dimensions_without_evidence(confidence)
+    no_data_note = (
+        "\nDIMENSIONS WITH NO COLLECTED DATA: "
+        + ", ".join(empty_sections)
+        + f".\nFor these sections write exactly '{UNKNOWN_LINE}' and nothing "
+        "else. Do not describe the company from general knowledge.\n"
+        if empty_sections
+        else ""
+    )
+
     prompt = f"""Synthesize a vendor intelligence brief from the specialist analyses below.
+{no_data_note}
 
 Company: {state["company_name"]}
 
@@ -285,10 +300,8 @@ DATA SOURCES: SEC EDGAR, GitHub, ArXiv, Google News, Neo4j competitive graph"""
         state, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
     )
 
-    # Deterministic, evidence-based confidence — no LLM call, so no added
-    # latency. A low-confidence brief is flagged for human review; in
-    # serve-with-banner mode it still ships, just annotated.
-    confidence = compute_confidence(state["company_name"])
+    # The prompt asks for UNKNOWN on empty dimensions; this guarantees it.
+    brief = _enforce_unknown_sections(brief, confidence)
     brief = _append_confidence_section(brief, confidence)
 
     return {
@@ -299,6 +312,65 @@ DATA SOURCES: SEC EDGAR, GitHub, ArXiv, Google News, Neo4j competitive graph"""
         "confidence": confidence,
         "needs_review": confidence["needs_review"],
     }
+
+
+# Brief section -> the confidence dimension whose evidence backs it.
+_SECTION_DIMENSIONS = {
+    "FINANCIAL HEALTH": "financial",
+    "TECHNOLOGY MOMENTUM": "technology",
+    "NEWS & SENTIMENT": "news",
+    "PERSONNEL STABILITY": "personnel",
+    "COMPETITIVE POSITION": "competitive",
+}
+_SECTION_NAMES = list(_SECTION_DIMENSIONS) + ["EXECUTIVE SUMMARY", "DATA SOURCES"]
+
+UNKNOWN_LINE = "UNKNOWN — no data collected"
+
+
+def _dimensions_without_evidence(confidence: dict) -> list[str]:
+    """Dimensions that have no evidence behind them, by section name."""
+    empty = []
+    for section, dimension in _SECTION_DIMENSIONS.items():
+        info = confidence["dimensions"].get(dimension) or {}
+        if info.get("level") == "unknown" or not info.get("evidence_count"):
+            empty.append(section)
+    return empty
+
+
+def _header_match(brief: str, name: str):
+    return re.search(rf"\*{{0,2}}{re.escape(name)}\*{{0,2}}\s*:?\**", brief)
+
+
+def _enforce_unknown_sections(brief: str, confidence: dict) -> str:
+    """Force sections with no evidence to say UNKNOWN.
+
+    Rule 3 of the synthesis prompt already asks for this, but a prompt is a
+    request, not a guarantee: when the Neo4j graph went offline the model
+    filled COMPETITIVE POSITION with generic prose ("a prominent player in the
+    AI development space") rather than admitting it had nothing. Enforcing it
+    here makes the honest answer structural instead of hoped-for.
+    """
+    for section in _dimensions_without_evidence(confidence):
+        header = _header_match(brief, section)
+        if not header:
+            continue
+
+        body_start = header.end()
+        following = [
+            body_start + m.start()
+            for other in _SECTION_NAMES
+            if other != section
+            for m in [_header_match(brief[body_start:], other)]
+            if m
+        ]
+        body_end = min(following) if following else len(brief)
+
+        if UNKNOWN_LINE.split("—")[0].strip().lower() in brief[body_start:body_end].lower():
+            continue  # the model already said UNKNOWN, leave its wording alone
+
+        brief = brief[:body_start] + f"\n{UNKNOWN_LINE}\n\n" + brief[body_end:]
+
+    return brief
 
 
 def _append_confidence_section(brief: str, confidence: dict) -> str:

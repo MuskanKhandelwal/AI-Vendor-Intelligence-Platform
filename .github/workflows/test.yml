@@ -1,4 +1,4 @@
-name: API Health Check
+name: Tests
 on:
   push:
     branches: [main]
@@ -19,6 +19,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       
+      # Brief-quality checks: structure, score fidelity, honest UNKNOWNs,
+      # banned filler, date/amount grounding. Fixture-based, so no database,
+      # AWS or Neo4j credentials are needed. The full eval (which generates
+      # real briefs) requires a live environment and is run manually:
+      #   python evaluation/eval_runner.py
+      - name: Run evaluation unit tests
+        run: python -m unittest discover -s evaluation -v
+
       - name: Test API health endpoint
         run: |
           python -c "
