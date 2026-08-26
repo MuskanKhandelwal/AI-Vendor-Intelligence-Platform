@@ -226,7 +226,13 @@ This design allows the supervisor to prioritize which dimensions matter most for
 - ArXiv search matches company name as a string — may return false positives 
   for generic names (Modal, Notion, Writer, Chroma)
 - GitHub org names in seed_companies.json are best-guess — 5 orgs not found
-- Evaluation dataset not yet built — accuracy metrics pending week 4
+- Human-labeled accuracy set is still being filled in. `evaluation/eval_runner.py`
+  runs deterministic checks (structure, score fidelity, honest UNKNOWNs, banned
+  filler, date/amount grounding) on every brief today; run it with
+  `--emit-labels` to queue claims into `evaluation/labeled_briefs.csv` for
+  manual y/n labelling.
+- Briefs write prose for COMPETITIVE POSITION even when Neo4j is unreachable,
+  instead of the required UNKNOWN. Caught by `eval_runner.py`; fix pending.
 
 ## Mycroft Framework
 
