@@ -18,6 +18,9 @@ The check is deterministic and configured per company in seed_companies.json:
   exclude_entities - names of colliding organisations. Any match rejects.
   exclude_terms    - subject-matter terms belonging to a colliding entity's
                      domain rather than this vendor's. Any match rejects.
+  common_word_name - set when the name is also ordinary English ("Scale AI").
+                     Rejects text where the name only appears as a verb or a
+                     compound modifier: "raised $1B to scale AI".
 
 Precision is preferred over recall: in a procurement brief a dropped signal is
 a visible gap (confidence scoring already flags thin evidence), but a
@@ -64,6 +67,61 @@ def _matches(phrase: str, haystack: str) -> bool:
     return bool(_pattern(phrase).search(haystack))
 
 
+# A name that is also an ordinary word gets matched when that word is used as a
+# verb or inside a compound modifier, and the headline is then about somebody
+# else entirely: "SambaNova Raised $1 Billion To Scale AI Inference", or
+# "Alberta May See Gigawatt-Scale AI Data Centres". Both stored under Scale AI.
+_VERBAL_LEAD = (
+    r"(?:to|and|how|that|help|helps|helping|will|would|can|could|must|should"
+    r"|cannot|you|we|they)"
+)
+
+
+def _is_generic_occurrence(match: re.Match, haystack: str) -> bool:
+    """True when this particular occurrence reads as ordinary words."""
+    before = haystack[: match.start()]
+
+    # "raised $1B to scale AI", "to help clients scale AI", "firms that scale
+    # AI". Intervening words must be lowercase so a proper noun in between
+    # ("to Microsoft and OpenAI") does not read as a verb phrase.
+    if re.search(rf"\b{_VERBAL_LEAD}\s+(?:[\w'’]+\s+){{0,2}}$", before, re.IGNORECASE):
+        return True
+
+    # "gigawatt-scale AI", "large-scale AI". The lookbehind keeps the prefix
+    # word wholly lowercase, so "Microsoft-OpenAI" is not mistaken for one.
+    if re.search(r"(?<!\w)[a-z]+-$", before):
+        return True
+
+    return False
+
+
+def _generic_usage_only(alias: str, haystack: str) -> bool:
+    """True when every occurrence of `alias` is ordinary words, not the company.
+
+    Requires *all* occurrences to be generic, so text that uses the words
+    loosely but also names the company properly is still kept.
+    """
+    occurrences = list(_pattern(alias).finditer(haystack))
+    if not occurrences:
+        return False
+    return all(_is_generic_occurrence(m, haystack) for m in occurrences)
+
+
+def _reads_as_ordinary_words(company: dict, primary: str, matched: list[str]) -> bool:
+    """Whether a common-word name is only ordinary language in the source text.
+
+    Judged on `primary` — the headline or paper title — and never on a
+    generated summary: the summary is written *about* the misattributed article
+    and reliably names the tracked vendor cleanly, which would mask the very
+    collision being tested for.
+    """
+    present = [alias for alias in matched if _pattern(alias).search(primary)]
+    if not present:
+        # The source text never names the company; only derived text did.
+        return True
+    return all(_generic_usage_only(alias, primary) for alias in present)
+
+
 def aliases_for(company: dict) -> list[str]:
     """Accepted surface forms of a company's name, defaulting to the name."""
     aliases = company.get("aliases") or []
@@ -103,9 +161,22 @@ def check_entity(company: dict, *texts: str | None) -> EntityCheck:
             )
 
     names = aliases_for(company)
-    if not any(_matches(alias, haystack) for alias in names):
+    matched = [alias for alias in names if _matches(alias, haystack)]
+    if not matched:
         return EntityCheck(
             False, f'no whole-word mention of "{company["name"]}" or its aliases'
+        )
+
+    # Only for names that are also ordinary English words. Gated per company
+    # because the patterns that catch "to scale AI" would also strip legitimate
+    # phrasing like "according to the OpenAI team" for a distinctive name.
+    if company.get("common_word_name") and _reads_as_ordinary_words(
+        company, next((t for t in texts if t), ""), matched
+    ):
+        return EntityCheck(
+            False,
+            f'"{company["name"]}" appears only as ordinary words '
+            "(verb or compound modifier), not as the company",
         )
 
     return EntityCheck(True, "ok")
@@ -121,4 +192,6 @@ def news_query(company: dict) -> str:
     query = f'"{name}" AI'
     for phrase in company.get("exclude_entities", []):
         query += f' -"{phrase}"'
+    for term in company.get("exclude_terms", []):
+        query += f' -"{term}"'
     return query

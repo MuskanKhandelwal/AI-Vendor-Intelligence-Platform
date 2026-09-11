@@ -75,6 +75,17 @@
     "aliases": [
       "Scale AI",
       "ScaleAI"
+    ],
+    "common_word_name": true,
+    "exclude_terms": [
+      "gigawatt-scale",
+      "giga-scale",
+      "megawatt-scale",
+      "mw-scale",
+      "rack-scale",
+      "large-scale",
+      "enterprise scale",
+      "AI scale"
     ]
   },
   {
