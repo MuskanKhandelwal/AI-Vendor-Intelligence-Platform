@@ -5,7 +5,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from agents.llm import get_llm
 from agents.tools import (
     compute_financial_health_score,
@@ -57,7 +57,7 @@ UNKNOWN rather than guessing a number.
    SOURCES: cite signal dates and headlines
 Be concise. If no data found, say so honestly."""
 
-financial_agent = create_react_agent(
+financial_agent = create_agent(
     model=get_llm(),
     tools=[
         compute_financial_health_score,
@@ -66,7 +66,7 @@ financial_agent = create_react_agent(
         query_executive_changes,
         get_signal_summary,
     ],
-    prompt=FINANCIAL_PROMPT,
+    system_prompt=FINANCIAL_PROMPT,
 )
 
 
@@ -101,7 +101,7 @@ Given a company name, use your tools to gather technology signals then provide:
 4. GITHUB ACTIVITY: release velocity assessment
 Be concise. If no data found, say so honestly."""
 
-technology_agent = create_react_agent(
+technology_agent = create_agent(
     model=get_llm(),
     tools=[
         query_github_signals,
@@ -109,7 +109,7 @@ technology_agent = create_react_agent(
         get_signal_summary,
         query_all_signals_count,
     ],
-    prompt=TECHNOLOGY_PROMPT,
+    system_prompt=TECHNOLOGY_PROMPT,
 )
 
 
@@ -144,14 +144,14 @@ Given a company name, use your tools to gather news signals then provide:
 4. PARTNERSHIPS: notable announcements
 Be concise. If no data found, say so honestly."""
 
-news_agent = create_react_agent(
+news_agent = create_agent(
     model=get_llm(),
     tools=[
         query_news_signals,
         query_negative_signals,
         get_signal_summary,
     ],
-    prompt=NEWS_PROMPT,
+    system_prompt=NEWS_PROMPT,
 )
 
 
@@ -186,14 +186,14 @@ personnel signals then provide:
 3. STABILITY ASSESSMENT: one paragraph
 Be concise. If no data found, say so honestly."""
 
-personnel_agent = create_react_agent(
+personnel_agent = create_agent(
     model=get_llm(),
     tools=[
         query_executive_changes,
         query_annual_filings,
         get_signal_summary,
     ],
-    prompt=PERSONNEL_PROMPT,
+    system_prompt=PERSONNEL_PROMPT,
 )
 
 
@@ -229,7 +229,7 @@ then provide:
 4. COMPETITIVE RISKS: any concerning signals
 Be concise. If no data found, say so honestly."""
 
-competitive_agent = create_react_agent(
+competitive_agent = create_agent(
     model=get_llm(),
     tools=[
         query_neo4j_competitors,
@@ -237,7 +237,7 @@ competitive_agent = create_react_agent(
         query_neo4j_company_info,
         query_news_signals,
     ],
-    prompt=COMPETITIVE_PROMPT,
+    system_prompt=COMPETITIVE_PROMPT,
 )
 
 
