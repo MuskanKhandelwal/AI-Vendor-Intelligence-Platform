@@ -60,8 +60,14 @@ def trace_llm_call(
     output_text: str,
     model_name: str,
     metadata: dict[str, Any] | None = None,
+    usage_details: dict[str, int] | None = None,
+    model_parameters: dict[str, Any] | None = None,
 ) -> str | None:
     """Create a Langfuse trace with a single generation span.
+
+    `input_text` and `output_text` must be the actual prompt sent and the
+    actual text returned. Passing a paraphrase makes the trace useless for the
+    one job it exists to do: explaining why the model answered as it did.
 
     Returns the trace_id string, or None if Langfuse is not configured.
     """
@@ -79,6 +85,8 @@ def trace_llm_call(
             input=input_text,
             output=output_text,
             metadata=metadata,
+            usage_details=usage_details,
+            model_parameters=model_parameters,
         )
 
         observation.end()
@@ -90,33 +98,47 @@ def trace_llm_call(
         return None
 
 
-def trace_signal_classification(
+def trace_collector_call(
+    trace_name: str,
     company_name: str,
-    headline: str,
-    signal_type: str,
-    importance_score: int,
+    prompt: str,
+    response_text: str,
     model_name: str,
+    response=None,
+    **extra_metadata: Any,
 ) -> str | None:
-    """Convenience wrapper for tracing a signal classification LLM call.
+    """Trace a collector LLM call using the real prompt and real response.
+
+    Replaces an earlier `trace_signal_classification` that reconstructed both
+    sides from a few scalars, e.g. input "Classify the following headline for
+    X" and output "signal_type=funding, importance_score=85". Neither string
+    was ever sent to or returned by the model, so a trace could not be used to
+    debug a misclassification -- it did not contain the prompt or the answer.
+
+    Pass the Groq `response` object to record real token usage and sampling
+    parameters alongside it.
 
     Returns the trace_id string, or None if Langfuse is not configured.
     """
-    input_text = f"Classify the following headline for {company_name}:\n\n{headline}"
-    output_text = (
-        f"signal_type={signal_type}, importance_score={importance_score}"
-    )
-    metadata = {
-        "company_name": company_name,
-        "signal_type": signal_type,
-        "importance_score": importance_score,
-    }
+    usage_details = None
+    model_parameters = None
+    if response is not None:
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            usage_details = {
+                "input": getattr(usage, "prompt_tokens", 0),
+                "output": getattr(usage, "completion_tokens", 0),
+                "total": getattr(usage, "total_tokens", 0),
+            }
 
     return trace_llm_call(
-        trace_name="signal-classification",
-        input_text=input_text,
-        output_text=output_text,
+        trace_name=trace_name,
+        input_text=prompt,
+        output_text=response_text,
         model_name=model_name,
-        metadata=metadata,
+        metadata={"company_name": company_name, **extra_metadata},
+        usage_details=usage_details,
+        model_parameters=model_parameters,
     )
 
 

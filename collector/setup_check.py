@@ -81,7 +81,7 @@ def check_groq() -> None:
         from groq import Groq
         client = Groq(api_key=api_key)
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-20b",
             messages=[{"role": "user", "content": "Say hello in one word"}],
             max_tokens=10,
             temperature=0,

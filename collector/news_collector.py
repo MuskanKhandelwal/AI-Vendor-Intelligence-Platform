@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 
 import feedparser
 from dotenv import load_dotenv
-from groq import Groq
+from groq import BadRequestError, Groq
 
 sys.path.insert(0, os.path.dirname(__file__))
 import db
@@ -23,55 +23,99 @@ load_dotenv()
 
 SEED_FILE = Path(__file__).parent / "seed_companies.json"
 RATE_LIMIT_SLEEP = 1  # seconds between companies
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 CLASSIFICATION_PROMPT = """You are screening news for a procurement intelligence
 platform that tracks {company_name}, an AI/machine-learning technology vendor.
 
 Headline: '{title}'
 
-Return only valid JSON with these exact fields:
+STEP 1a — Identify the grammatical role of "{company_name}" in the headline.
+Quote the exact phrase containing the name, then classify that phrase as one of:
+- "proper_noun_entity": the name refers to a specific organization acting or
+  being acted upon (e.g. "Scale AI raised funding", "Scale AI's CEO departed",
+  "Cohere raises $500M").
+- "common_word_or_verb": the name is used as an ordinary word/verb, not as an
+  organization. Test: could you substitute a synonym (e.g. "grow"/"expand" for
+  "scale") and have the sentence still make identical sense? If yes, this is
+  the verb, not the company (e.g. "to scale AI inference", "scale AI without
+  increasing risk", "before you scale AI").
+- "different_organization": a different, specifically-named entity is the
+  actual subject/actor of the headline, and {company_name} appears only
+  incidentally or as part of a longer descriptive phrase (e.g. "Elevate
+  Education Bags Rs 170 Cr To Scale AI-Led Learning Platform" — the actor is
+  Elevate Education, not Scale AI).
+
+STEP 1b — Decide "about_company". This matters more than the category.
+- Company names are not unique. Unrelated organisations share names with the AI
+  vendors we track (e.g. "Cohere Health" is a health-insurance company and
+  "Cohere Technologies" is a wireless-RF company; neither is the AI vendor
+  Cohere).
+- Signals that the headline is a namesake, not the AI vendor: subject matter far
+  outside AI/software — telecom RF and radio hardware, defence radar, health
+  insurance and clinical operations, aviation, fashion, consumer packaged goods.
+- Set "about_company": true ONLY IF step 1a == "proper_noun_entity" AND that
+  entity plausibly is the AI/ML vendor {company_name} (not an unrelated
+  namesake organisation with the same name).
+- Set "about_company": false if step 1a == "common_word_or_verb" or
+  "different_organization", or if genuinely uncertain — a wrong-company signal
+  becomes a false claim in a procurement brief.
+- If "about_company" is false: set "signal_type": "other", "importance_score": 0,
+  and "one_line_summary" to a short neutral note on what the headline is
+  actually about (the real subject, or that the name was used as a common
+  word/verb).
+
+STEP 2 — Choose signal_type (only if about_company is true):
+- "negative": ONLY genuine business/financial distress — layoffs, outages,
+  bankruptcy, insolvency, product recalls, lawsuits.
+- "reputational": controversy, criticism, geopolitical friction, competitive
+  pressure, or public-image news that is NOT financial distress. If unsure
+  between negative and reputational, choose reputational.
+- Otherwise: funding, executive_change, product_launch, partnership,
+  regulatory, or other.
+
+STEP 3 — Score importance_score (only if about_company is true):
+- funding: 70-95, negative: 65-95, executive_change: 60-85,
+  product_launch: 50-80, regulatory: 50-80, partnership: 45-70,
+  reputational: 35-65, other: 10-30
+
+STEP 4 — Write one_line_summary: a neutral, factual restatement of the
+headline under 150 characters, no editorializing.
+
+EXAMPLES
+
+Headline: "Cohere raises $500M Series D led by Nvidia"
+{{"quoted_evidence": "Cohere raises $500M Series D", "grammatical_role": "proper_noun_entity", "about_company": true, "signal_type": "funding", "importance_score": 92, "one_line_summary": "Cohere raised a $500M Series D led by Nvidia."}}
+
+Headline: "Cohere Health names new Chief Medical Officer"
+{{"quoted_evidence": "Cohere Health names new Chief Medical Officer", "grammatical_role": "proper_noun_entity", "about_company": false, "signal_type": "other", "importance_score": 0, "one_line_summary": "About Cohere Health, a health-insurance company, not the AI vendor Cohere."}}
+
+Headline: "Cohere faces backlash over data retention policy in EU"
+{{"quoted_evidence": "Cohere faces backlash", "grammatical_role": "proper_noun_entity", "about_company": true, "signal_type": "reputational", "importance_score": 50, "one_line_summary": "Cohere criticized in EU over its data retention policy."}}
+
+Headline: "SambaNova Raised $1 Billion To Scale AI Inference"
+{{"quoted_evidence": "To Scale AI Inference", "grammatical_role": "common_word_or_verb", "about_company": false, "signal_type": "other", "importance_score": 0, "one_line_summary": "About SambaNova; 'scale' used as a verb, not the company Scale AI."}}
+
+Headline: "Build The Human Foundations Before You Scale AI"
+{{"quoted_evidence": "Before You Scale AI", "grammatical_role": "common_word_or_verb", "about_company": false, "signal_type": "other", "importance_score": 0, "one_line_summary": "General advice article; 'scale AI' used as a verb phrase, not the company."}}
+
+Headline: "How defense teams can scale AI without increasing risk"
+{{"quoted_evidence": "scale AI without increasing risk", "grammatical_role": "common_word_or_verb", "about_company": false, "signal_type": "other", "importance_score": 0, "one_line_summary": "General advice on AI adoption; 'scale' used as a verb, not the company."}}
+
+Headline: "Elevate Education Bags Rs 170 Cr To Scale AI-Led Learning Platform"
+{{"quoted_evidence": "Elevate Education Bags Rs 170 Cr", "grammatical_role": "different_organization", "about_company": false, "signal_type": "other", "importance_score": 0, "one_line_summary": "Elevate Education raised funding; 'Scale AI-Led' is descriptive, not the company Scale AI."}}
+
+Return ONLY the JSON object below — no markdown fences, no preamble, no
+trailing text:
 {{
+  "quoted_evidence": string,
+  "grammatical_role": one of [proper_noun_entity, common_word_or_verb, different_organization],
   "about_company": true or false,
   "signal_type": one of [funding, executive_change, product_launch, partnership, negative, reputational, regulatory, other],
   "importance_score": integer 0-100,
   "one_line_summary": string under 150 chars
 }}
-
-FIRST decide "about_company" — this matters more than the category:
-- Company names are not unique. Unrelated organisations share names with the AI
-  vendors we track (e.g. "Cohere Health" is a health-insurance company and
-  "Cohere Technologies" is a wireless-RF company; neither is the AI vendor
-  Cohere). Several vendor names are also ordinary English words.
-- Set "about_company": false when the headline is about a DIFFERENT organisation
-  that merely shares the name, or when the name is used as a common word rather
-  than as a company (e.g. "investors are adept at spotting AI hype").
-- Signals that the headline is a namesake, not the AI vendor: subject matter far
-  outside AI/software — telecom RF and radio hardware, defence radar, health
-  insurance and clinical operations, aviation, fashion, consumer packaged goods.
-- Set "about_company": true only if the headline plausibly concerns the AI/ML
-  technology vendor. If genuinely uncertain, set false — a wrong-company signal
-  becomes a false claim in a procurement brief.
-
-Choosing signal_type — read carefully:
-- "negative" is ONLY for genuine business/financial distress: layoffs, outages,
-  bankruptcy, insolvency, product recalls, or the company being sued. It should
-  imply the company itself is in trouble.
-- "reputational" is for controversy, criticism, geopolitical friction,
-  competitive pressure, or public-image news that is NOT financial distress —
-  e.g. "China warns of security backdoor", "faces competition from X",
-  "political risk", "criticized for Y". Do NOT label these "negative".
-- If unsure between negative and reputational, choose reputational.
-
-Scoring guide:
-- funding rounds: 85
-- negative news (layoffs, outages, lawsuits, bankruptcy): 80
-- executive changes: 75
-- product launches: 70
-- regulatory: 65
-- reputational/controversy: 55
-- partnerships: 60
-- other: 30"""
+"""
 
 FUNDING_AMOUNT_RE = re.compile(r'\$\s?(\d+(?:\.\d+)?)\s*(million|billion|[MB])\b', re.I)
 
@@ -138,8 +182,36 @@ def classify_article_rules(title: str) -> dict | None:
 # Groq classification
 # ---------------------------------------------------------------------------
 
-def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, bool]:
-    """Call Groq to classify a news article. Returns (dict, hit_rate_limit) tuple."""
+def _unverified_default(title: str) -> dict:
+    """Classification used when the entity check could not be completed.
+
+    Fails CLOSED, matching what CLASSIFICATION_PROMPT already tells the model:
+    an uncertain call must be false, because a wrong-company signal becomes a
+    false claim in a procurement brief, whereas a dropped signal is a visible
+    gap that confidence scoring already flags.
+
+    This previously defaulted to about_company=True, which meant any API or
+    JSON failure silently waved the headline through with the entity check
+    never having run.
+    """
+    return {
+        "about_company": False,
+        "signal_type": "other",
+        "importance_score": 0,
+        "one_line_summary": f"Entity check unavailable, not stored: {title[:105]}",
+    }
+
+
+def classify_article(
+    groq: Groq, company_name: str, title: str
+) -> tuple[dict, bool, str | None]:
+    """Call Groq to classify a news article.
+
+    Returns (classification, hit_rate_limit, langfuse_trace_id). The trace is
+    created here rather than by the caller so that it records the real prompt
+    and the real response, and so that it is only created when an LLM call
+    actually happened -- rule-classified headlines get None.
+    """
     prompt = CLASSIFICATION_PROMPT.format(company_name=company_name, title=title)
     attempts = 0
     max_attempts = 2
@@ -151,12 +223,31 @@ def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, b
                 model=GROQ_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_tokens=200,
+                # v3 emits quoted_evidence + grammatical_role before the verdict.
+                # Measured peak is 329 tokens; at 200 roughly a quarter of calls
+                # died with json_validate_failed and fell through to the default.
+                max_tokens=500,
                 temperature=0,
+                # gpt-oss models emit reasoning tokens before the answer. "low"
+                # roughly halves them; the classification is unchanged.
+                reasoning_effort="low",
             )
             json_text = response.choices[0].message.content.strip()
             classification = json.loads(json_text)
-            return classification, False
+            trace_id = langfuse_helper.trace_collector_call(
+                trace_name="news-classification",
+                company_name=company_name,
+                prompt=prompt,
+                response_text=json_text,
+                model_name=GROQ_MODEL,
+                response=response,
+                headline=title,
+                signal_type=classification.get("signal_type"),
+                importance_score=classification.get("importance_score"),
+                about_company=classification.get("about_company"),
+                grammatical_role=classification.get("grammatical_role"),
+            )
+            return classification, False, trace_id
         except Exception as exc:
             error_message = str(exc)
             # Check for 429 rate limit error
@@ -173,39 +264,22 @@ def classify_article(groq: Groq, company_name: str, title: str) -> tuple[dict, b
                     continue
                 else:
                     # Second attempt failed, signal rate limit and return defaults
-                    return (
-                        {
-                            # Fail open on API failure: the deterministic
-                            # entity filter has already vetted this headline.
-                            "about_company": True,
-                            "signal_type": "other",
-                            "importance_score": 30,
-                            "one_line_summary": title[:150],
-                        },
-                        True,  # hit_rate_limit = True
-                    )
+                    return _unverified_default(title), True, None
+            # JSON-mode validation failure: the model ran out of tokens before
+            # closing the object, or broke the schema. Distinct from a transient
+            # error - it points at max_tokens or the prompt, so say so.
+            elif isinstance(exc, BadRequestError) or "json_validate_failed" in error_message:
+                print(
+                    f"    [json validate failed] response truncated or off-schema "
+                    f"(check max_tokens): {title[:60]}"
+                )
+                return _unverified_default(title), False, None
             # Non-rate-limit errors: return defaults immediately
             elif isinstance(exc, (json.JSONDecodeError, KeyError, AttributeError)):
-                return (
-                    {
-                        "about_company": True,
-                        "signal_type": "other",
-                        "importance_score": 30,
-                        "one_line_summary": title[:150],
-                    },
-                    False,
-                )
+                return _unverified_default(title), False, None
             else:
                 # Other exceptions: return defaults
-                return (
-                    {
-                        "about_company": True,
-                        "signal_type": "other",
-                        "importance_score": 30,
-                        "one_line_summary": title[:150],
-                    },
-                    False,
-                )
+                return _unverified_default(title), False, None
 
 
 # ---------------------------------------------------------------------------
@@ -268,9 +342,15 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool, int]:
 
         # Try rule-based classification first (saves tokens)
         classification = classify_article_rules(title)
+        # Rule-matched headlines never reach the model, so they have no trace.
+        # This used to emit a Langfuse "generation" for them anyway, recording
+        # a model call that never happened.
+        trace_id = None
         if classification is None:
             # No confident rule match — fall through to Groq
-            classification, hit_limit = classify_article(groq, name, entry.get("title", ""))
+            classification, hit_limit, trace_id = classify_article(
+                groq, name, entry.get("title", "")
+            )
             if hit_limit:
                 # Rate limit hit — stop processing this company
                 return signals_added, errors, True, rejected
@@ -285,18 +365,15 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool, int]:
         signal_type = classification.get("signal_type", "other")
         importance_score = classification.get("importance_score", 30)
         one_line_summary = classification.get("one_line_summary", title[:150])
+        # The model's own reasoning for the about_company verdict. Kept because
+        # it is the only record of WHY a headline was accepted: the Langfuse
+        # trace stores a reconstructed input/output, not the real exchange.
+        # Absent on rule-classified headlines, which never reach the LLM.
+        grammatical_role = classification.get("grammatical_role")
+        quoted_evidence = classification.get("quoted_evidence")
 
         funding_amount_millions = (
             extract_funding_amount(title) if signal_type == "funding" else None
-        )
-
-        # Log to Langfuse
-        trace_id = langfuse_helper.trace_signal_classification(
-            company_name=name,
-            headline=entry.get("title", ""),
-            signal_type=signal_type,
-            importance_score=importance_score,
-            model_name=GROQ_MODEL,
         )
 
         # Insert signal
@@ -314,6 +391,8 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int, bool, int]:
                     "feed_title": feed.feed.get("title", ""),
                     "original_title": entry.get("title", ""),
                     "funding_amount_millions": funding_amount_millions,
+                    "grammatical_role": grammatical_role,
+                    "quoted_evidence": quoted_evidence,
                 },
                 langfuse_trace_id=trace_id,
             )

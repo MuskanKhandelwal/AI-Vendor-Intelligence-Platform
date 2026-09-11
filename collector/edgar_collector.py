@@ -21,7 +21,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 SEED_FILE = Path(__file__).parent / "seed_companies.json"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-20b"
 RATE_LIMIT_SLEEP = 1  # seconds between companies
 
 NO_TEXT = "No description available"
@@ -162,17 +162,27 @@ def _generate_summary(groq: Groq, headline: str, company_name: str, signal_type:
     response = groq.chat.completions.create(
         model=GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=120,
+        # 120 was enough for Llama, but gpt-oss spends tokens on reasoning
+        # first and returned an empty summary. ~114 are used at "low" effort.
+        max_tokens=400,
         temperature=0.3,
+        reasoning_effort="low",
     )
     summary = response.choices[0].message.content.strip()
 
-    trace_id = langfuse_helper.trace_signal_classification(
+    # Traced with the real prompt (including the filing excerpt) and the real
+    # summary, so a thin or wrong summary can be diagnosed from the trace.
+    trace_id = langfuse_helper.trace_collector_call(
+        trace_name="edgar-filing-summary",
         company_name=company_name,
+        prompt=prompt,
+        response_text=summary,
+        model_name=GROQ_MODEL,
+        response=response,
         headline=headline,
         signal_type=signal_type,
         importance_score=importance_score,
-        model_name=GROQ_MODEL,
+        extraction_ok=context != NO_TEXT,
     )
 
     return summary, trace_id
