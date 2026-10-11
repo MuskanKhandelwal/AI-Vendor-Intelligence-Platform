@@ -39,23 +39,37 @@ def get_langfuse_callback():
 
 
 def get_llm(temperature=0.1):
-    """Get a Bedrock LLM instance for agent use with Langfuse tracing.
+    """Get a Bedrock LLM instance for agent use.
 
-    Automatically configures Langfuse tracing via CallbackHandler if credentials
-    are set in environment variables.
+    Deliberately carries no callback. Attaching the Langfuse handler here gave
+    every call its own root trace, so one brief arrived as ~20 unrelated rows
+    named "ChatBedrockConverse" with no way to tell which agent made which
+    call. The handler goes on the graph run instead, via trace_config(), and
+    LangChain propagates it down to these calls.
     """
-    callbacks = []
-    langfuse_cb = get_langfuse_callback()
-    if langfuse_cb:
-        callbacks = [langfuse_cb]
-
     return ChatBedrockConverse(
         model="us.amazon.nova-micro-v1:0",
         region_name=os.getenv("AWS_REGION", "us-east-1"),
         temperature=temperature,
         max_tokens=1000,
-        callbacks=callbacks,
     )
+
+
+def trace_config(company_name: str) -> dict:
+    """RunnableConfig that groups one whole brief under a single trace.
+
+    Nested `.invoke()` calls inside graph nodes inherit this through
+    langchain-core's ambient run config, so the supervisor, each specialist
+    and its tool calls all nest under one named trace.
+    """
+    callback = get_langfuse_callback()
+    if callback is None:
+        return {}
+    return {
+        "callbacks": [callback],
+        "run_name": f"brief:{company_name}",
+        "metadata": {"company_name": company_name},
+    }
 
 
 def flush_traces():

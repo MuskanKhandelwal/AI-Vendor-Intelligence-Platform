@@ -202,6 +202,57 @@ def _unverified_default(title: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Rate pacing
+# ---------------------------------------------------------------------------
+#
+# Groq's binding limit for this model is tokens-per-MINUTE (8,000), not a daily
+# cap. At ~1,800 tokens per classification that is about four calls a minute.
+# Sprinting until a 429 and then sleeping wastes a request and, worse, used to
+# abort the whole run; spending from a local budget keeps the run moving.
+
+TOKENS_PER_MINUTE = int(os.getenv("GROQ_TOKENS_PER_MINUTE", "8000"))
+# Above this, a 429 is real exhaustion (a daily/quota wall) rather than the
+# per-minute window rolling over, which clears in seconds.
+THROTTLE_WAIT_CEILING_S = 300
+
+_recent_calls: list[tuple[float, int]] = []
+
+
+def _record_usage(response) -> None:
+    """Remember this call's token cost for pacing."""
+    usage = getattr(response, "usage", None)
+    total = getattr(usage, "total_tokens", 0) if usage else 0
+    if total:
+        _recent_calls.append((time.monotonic(), total))
+
+
+def _await_token_budget(expected_tokens: int = 2000) -> None:
+    """Block until `expected_tokens` fit in the current per-minute window."""
+    now = time.monotonic()
+    _recent_calls[:] = [(t, n) for t, n in _recent_calls if now - t < 60]
+    used = sum(n for _, n in _recent_calls)
+    if used + expected_tokens <= TOKENS_PER_MINUTE or not _recent_calls:
+        return
+    wait = 60 - (now - _recent_calls[0][0]) + 0.5
+    if wait > 0:
+        print(
+            f"    [pacing] {used}/{TOKENS_PER_MINUTE} tokens used this minute, "
+            f"waiting {wait:.0f}s"
+        )
+        time.sleep(wait)
+    _recent_calls.clear()
+
+
+def _parse_retry_after(error_message: str) -> float | None:
+    """Seconds Groq asked us to wait, from either '1m2.5s' or '2.79s' form."""
+    m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", error_message)
+    if not m:
+        return None
+    minutes = int(m.group(1)) if m.group(1) else 0
+    return minutes * 60 + float(m.group(2))
+
+
 def classify_article(
     groq: Groq, company_name: str, title: str
 ) -> tuple[dict, bool, str | None]:
@@ -214,11 +265,14 @@ def classify_article(
     """
     prompt = CLASSIFICATION_PROMPT.format(company_name=company_name, title=title)
     attempts = 0
-    max_attempts = 2
+    # A per-minute window clears in seconds, so retrying a handful of times is
+    # cheap and keeps the run alive. Was 2, which gave up almost immediately.
+    max_attempts = 6
 
     while attempts < max_attempts:
         attempts += 1
         try:
+            _await_token_budget()
             response = groq.chat.completions.create(
                 model=GROQ_MODEL,
                 messages=[{"role": "user", "content": prompt}],
@@ -232,6 +286,7 @@ def classify_article(
                 # roughly halves them; the classification is unchanged.
                 reasoning_effort="low",
             )
+            _record_usage(response)
             json_text = response.choices[0].message.content.strip()
             classification = json.loads(json_text)
             trace_id = langfuse_helper.trace_collector_call(
@@ -252,19 +307,29 @@ def classify_article(
             error_message = str(exc)
             # Check for 429 rate limit error
             if "429" in error_message or "rate_limit" in error_message.lower():
-                if attempts < max_attempts:
-                    # Parse wait time from error message
-                    match = re.search(r'try again in (\d+)m([\d.]+)s', error_message)
-                    if match:
-                        wait = int(match.group(1)) * 60 + float(match.group(2)) + 5
-                    else:
-                        wait = 180  # default 3 minutes
-                    print(f"  [rate limit] Daily token limit reached. Waiting {wait:.0f}s before retrying...")
-                    time.sleep(wait)
-                    continue
-                else:
-                    # Second attempt failed, signal rate limit and return defaults
+                wait = _parse_retry_after(error_message)
+                # A long wait means a real quota wall; only then is stopping
+                # the run correct. A short one is the per-minute window
+                # rolling over, which previously also killed the run.
+                if wait is not None and wait > THROTTLE_WAIT_CEILING_S:
+                    print(
+                        f"  [quota] Groq asked for {wait / 60:.0f} min - treating "
+                        "as exhausted, stopping collection."
+                    )
                     return _unverified_default(title), True, None
+                if attempts < max_attempts:
+                    delay = (wait if wait is not None else 5.0) + 1.0
+                    print(
+                        f"    [throttle] per-minute limit, waiting {delay:.0f}s "
+                        f"(attempt {attempts}/{max_attempts - 1})"
+                    )
+                    time.sleep(delay)
+                    _recent_calls.clear()
+                    continue
+                # Still throttled after every retry: skip this headline rather
+                # than abandon the remaining companies.
+                print(f"    [throttle] gave up on: {title[:60]}")
+                return _unverified_default(title), False, None
             # JSON-mode validation failure: the model ran out of tokens before
             # closing the object, or broke the schema. Distinct from a transient
             # error - it points at max_tokens or the prompt, so say so.
@@ -446,8 +511,10 @@ def run() -> None:
             )
 
             if hit_rate_limit:
-                print(f"  [RATE LIMIT] Hit Groq daily limit at {name}. Stopping collection.")
-                print(f"  Resume tomorrow or check token usage in Langfuse.")
+                # Only raised for a real quota wall now. Per-minute throttling
+                # is absorbed by the pacer and no longer stops the run.
+                print(f"  [QUOTA] Groq quota exhausted at {name}. Stopping collection.")
+                print(f"  {companies_processed}/{total} companies done. Re-run later to continue.")
                 break
 
         except Exception as exc:

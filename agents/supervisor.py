@@ -14,7 +14,7 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 
-from agents.llm import get_llm, flush_traces
+from agents.llm import get_llm, flush_traces, trace_config
 from agents.scoring import compute_confidence
 from agents.specialists import (
     run_financial_agent,
@@ -500,7 +500,7 @@ def generate_brief(company_name: str) -> dict:
     )
 
     # Execute the graph
-    final_state = graph.invoke(initial_state)
+    final_state = graph.invoke(initial_state, config=trace_config(company_name) or None)
 
     elapsed = time.monotonic() - wall_start
     minutes, seconds = divmod(int(elapsed), 60)
