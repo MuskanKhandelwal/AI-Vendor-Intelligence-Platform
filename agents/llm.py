@@ -1,11 +1,16 @@
 """Shared LLM initialization for agents."""
 
 import os
+from botocore.config import Config
 from langchain_aws import ChatBedrockConverse
 from langfuse.langchain import CallbackHandler
 from dotenv import load_dotenv
 
 load_dotenv()
+
+BEDROCK_CONNECT_TIMEOUT_S = float(os.getenv("BEDROCK_CONNECT_TIMEOUT_S", "10"))
+BEDROCK_READ_TIMEOUT_S = float(os.getenv("BEDROCK_READ_TIMEOUT_S", "30"))
+BEDROCK_MAX_ATTEMPTS = int(os.getenv("BEDROCK_MAX_ATTEMPTS", "3"))
 
 # Langfuse callback (singleton, initialized once)
 _langfuse_callback = None
@@ -52,6 +57,15 @@ def get_llm(temperature=0.1):
         region_name=os.getenv("AWS_REGION", "us-east-1"),
         temperature=temperature,
         max_tokens=1000,
+        # A brief makes 7+ of these calls, so one hung socket stalls the whole
+        # graph. botocore's default 60s read timeout is far too patient for a
+        # request a user is waiting on; retries are set explicitly so the
+        # worst case stays bounded rather than inherited.
+        config=Config(
+            connect_timeout=BEDROCK_CONNECT_TIMEOUT_S,
+            read_timeout=BEDROCK_READ_TIMEOUT_S,
+            retries={"max_attempts": BEDROCK_MAX_ATTEMPTS, "mode": "standard"},
+        ),
     )
 
 

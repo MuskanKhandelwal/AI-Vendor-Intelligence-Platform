@@ -16,6 +16,7 @@ from groq import BadRequestError, Groq
 
 sys.path.insert(0, os.path.dirname(__file__))
 import db
+from models import GROQ_MODEL, GROQ_REASONING_EFFORT
 import langfuse_helper
 from entity_filter import check_entity, news_query
 
@@ -23,7 +24,6 @@ load_dotenv()
 
 SEED_FILE = Path(__file__).parent / "seed_companies.json"
 RATE_LIMIT_SLEEP = 1  # seconds between companies
-GROQ_MODEL = "openai/gpt-oss-20b"
 
 CLASSIFICATION_PROMPT = """You are screening news for a procurement intelligence
 platform that tracks {company_name}, an AI/machine-learning technology vendor.
@@ -284,7 +284,7 @@ def classify_article(
                 temperature=0,
                 # gpt-oss models emit reasoning tokens before the answer. "low"
                 # roughly halves them; the classification is unchanged.
-                reasoning_effort="low",
+                reasoning_effort=GROQ_REASONING_EFFORT,
             )
             _record_usage(response)
             json_text = response.choices[0].message.content.strip()

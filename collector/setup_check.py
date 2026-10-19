@@ -4,6 +4,7 @@ import os
 import re
 from dotenv import load_dotenv
 
+from models import GROQ_MODEL
 load_dotenv()
 
 results: dict[str, bool] = {}
@@ -81,7 +82,7 @@ def check_groq() -> None:
         from groq import Groq
         client = Groq(api_key=api_key)
         response = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
+            model=GROQ_MODEL,
             messages=[{"role": "user", "content": "Say hello in one word"}],
             max_tokens=10,
             temperature=0,

@@ -14,6 +14,9 @@ from agents.scoring import compute_financial_health
 
 load_dotenv()
 
+NEO4J_CONNECT_TIMEOUT_S = float(os.getenv("NEO4J_CONNECT_TIMEOUT_S", "10"))
+NEO4J_RETRY_TIME_S = float(os.getenv("NEO4J_RETRY_TIME_S", "15"))
+
 
 # ---------------------------------------------------------------------------
 # Postgres Signal Query Tools
@@ -312,7 +315,14 @@ def _get_neo4j_driver():
             "NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD must be set"
         )
 
-    return GraphDatabase.driver(uri, auth=(user, password))
+    # The graph has been unreachable for days at a time; without these the
+    # competitive agent hangs instead of returning an error string.
+    return GraphDatabase.driver(
+        uri,
+        auth=(user, password),
+        connection_timeout=NEO4J_CONNECT_TIMEOUT_S,
+        max_transaction_retry_time=NEO4J_RETRY_TIME_S,
+    )
 
 
 @tool

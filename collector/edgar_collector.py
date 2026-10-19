@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from groq import Groq
 
 import db
+from models import GROQ_MODEL, GROQ_REASONING_EFFORT
 import langfuse_helper
 
 load_dotenv()
@@ -21,7 +22,6 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 SEED_FILE = Path(__file__).parent / "seed_companies.json"
-GROQ_MODEL = "openai/gpt-oss-20b"
 RATE_LIMIT_SLEEP = 1  # seconds between companies
 
 NO_TEXT = "No description available"
@@ -166,7 +166,7 @@ def _generate_summary(groq: Groq, headline: str, company_name: str, signal_type:
         # first and returned an empty summary. ~114 are used at "low" effort.
         max_tokens=400,
         temperature=0.3,
-        reasoning_effort="low",
+        reasoning_effort=GROQ_REASONING_EFFORT,
     )
     summary = response.choices[0].message.content.strip()
 
@@ -204,7 +204,13 @@ def _process_company(company: dict, groq: Groq) -> tuple[int, int]:
     # --- 10-K ---
     try:
         tenk_filings = edgar_company.get_filings(form="10-K")
-        latest_tenk = tenk_filings.latest()
+        # form= is a prefix match, so this also returns 10-K/A amendments.
+        # An amendment is a partial filing with no Item 1 Business section, so
+        # .latest() picking one meant extraction silently returned nothing --
+        # AMD's row carried extraction_ok=false for exactly this reason.
+        latest_tenk = next(
+            (f for f in tenk_filings if f.form == "10-K"), None
+        )
         if latest_tenk:
             filing_date = latest_tenk.filing_date
             description = _business_description(latest_tenk)

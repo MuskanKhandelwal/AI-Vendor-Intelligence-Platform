@@ -12,6 +12,10 @@ load_dotenv()
 
 _DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Fail loudly rather than hang. Overridable for a slow link or a heavy query.
+CONNECT_TIMEOUT_S = int(os.getenv("PG_CONNECT_TIMEOUT_S", "10"))
+STATEMENT_TIMEOUT_MS = int(os.getenv("PG_STATEMENT_TIMEOUT_MS", "30000"))
+
 _CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS ai_company_signals (
   id                SERIAL PRIMARY KEY,
@@ -158,7 +162,13 @@ def get_connection() -> psycopg2.extensions.connection:
         sys.exit(1)
 
     try:
-        conn = psycopg2.connect(_DATABASE_URL)
+        # Without these a hung server blocks the caller forever: a brief
+        # request would never return, and a collector would stall mid-run.
+        conn = psycopg2.connect(
+            _DATABASE_URL,
+            connect_timeout=CONNECT_TIMEOUT_S,
+            options=f"-c statement_timeout={STATEMENT_TIMEOUT_MS}",
+        )
         return conn
     except psycopg2.OperationalError as exc:
         print(
